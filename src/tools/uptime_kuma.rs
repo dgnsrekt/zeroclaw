@@ -202,7 +202,11 @@ fn format_status_response(
     };
 
     let mut output = String::new();
-    let _ = writeln!(output, "Queried at: {} UTC", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
+    let _ = writeln!(
+        output,
+        "Queried at: {} UTC",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
+    );
 
     // Parse heartbeatList: { "monitor_id": [ { status, msg, ping, ... }, ... ] }
     if let Some(heartbeat_list) = parsed.get("heartbeatList").and_then(|v| v.as_object()) {

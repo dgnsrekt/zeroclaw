@@ -11,10 +11,10 @@ pub use schema::{
     IdentityConfig, LarkConfig, MatrixConfig, MemoryConfig, ModelRouteConfig, NtfyConfig,
     NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig, PeripheralsConfig, ProxyConfig,
     ProxyScope, PushoverConfig, QueryClassificationConfig, ReliabilityConfig, ResourceLimitsConfig,
-    RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig,
-    SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
-    TelegramConfig, TunnelConfig, UptimeKumaConfig, UptimeKumaTarget, WebSearchConfig,
-    WebhookConfig,
+    RssFeedConfig, RssFeedEntry, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
+    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
+    StorageProviderSection, StreamMode, TelegramConfig, TunnelConfig, UptimeKumaConfig,
+    UptimeKumaTarget, WebSearchConfig, WebhookConfig,
 };
 
 #[cfg(test)]

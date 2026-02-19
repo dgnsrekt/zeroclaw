@@ -160,6 +160,10 @@ pub struct Config {
     /// Pushover push notification configuration.
     #[serde(default)]
     pub pushover: PushoverConfig,
+
+    /// RSS feed reader configuration.
+    #[serde(default)]
+    pub rss_feed: RssFeedConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -378,6 +382,58 @@ impl Default for UptimeKumaConfig {
             timeout_secs: default_uptime_kuma_timeout_secs(),
             connect_timeout_secs: default_uptime_kuma_connect_timeout_secs(),
             targets: Vec::new(),
+        }
+    }
+}
+
+// ── RSS Feeds ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RssFeedConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_rss_feed_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_rss_feed_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    /// Default max items per feed (1-50)
+    #[serde(default = "default_rss_feed_max_items")]
+    pub max_items: usize,
+    #[serde(default)]
+    pub feeds: Vec<RssFeedEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RssFeedEntry {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Per-feed max items override
+    #[serde(default)]
+    pub max_items: Option<usize>,
+}
+
+fn default_rss_feed_timeout_secs() -> u64 {
+    30
+}
+
+fn default_rss_feed_connect_timeout_secs() -> u64 {
+    10
+}
+
+fn default_rss_feed_max_items() -> usize {
+    10
+}
+
+impl Default for RssFeedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_rss_feed_timeout_secs(),
+            connect_timeout_secs: default_rss_feed_connect_timeout_secs(),
+            max_items: default_rss_feed_max_items(),
+            feeds: Vec::new(),
         }
     }
 }
@@ -2593,6 +2649,7 @@ impl Default for Config {
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
+            rss_feed: RssFeedConfig::default(),
         }
     }
 }
@@ -3437,6 +3494,7 @@ default_temperature = 0.7
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
+            rss_feed: RssFeedConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3581,6 +3639,7 @@ tool_dispatcher = "xml"
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
+            rss_feed: RssFeedConfig::default(),
         };
 
         config.save().unwrap();

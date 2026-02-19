@@ -24,6 +24,7 @@ pub mod memory_store;
 pub mod ntfy;
 pub mod proxy_config;
 pub mod pushover;
+pub mod rss_feed;
 pub mod schedule;
 pub mod schema;
 pub mod screenshot;
@@ -58,6 +59,7 @@ pub use memory_store::MemoryStoreTool;
 pub use ntfy::NtfyTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
+pub use rss_feed::RssFeedTool;
 pub use schedule::ScheduleTool;
 #[allow(unused_imports)]
 pub use schema::{CleaningStrategy, SchemaCleanr};
@@ -188,6 +190,10 @@ pub fn all_tools_with_runtime(
             security.clone(),
             root_config.uptime_kuma.clone(),
         )));
+    }
+
+    if root_config.rss_feed.enabled && !root_config.rss_feed.feeds.is_empty() {
+        tools.push(Box::new(RssFeedTool::new(root_config.rss_feed.clone())));
     }
 
     if browser_config.enabled {
