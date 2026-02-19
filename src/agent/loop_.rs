@@ -1343,6 +1343,7 @@ pub async fn run(
         &skills,
         Some(&config.identity),
         bootstrap_max_chars,
+        &[],
     );
 
     // Append structured tool-use instructions with schemas
@@ -1712,6 +1713,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         &skills,
         Some(&config.identity),
         bootstrap_max_chars,
+        &[],
     );
     system_prompt.push_str(&build_tool_instructions(&tools_registry));
 
