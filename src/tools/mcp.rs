@@ -40,19 +40,25 @@ impl McpTool {
 
     fn build_description(config: &McpConfig) -> String {
         let mut desc = String::from(
-            "Call a tool on a remote MCP (Model Context Protocol) server via stdio transport.",
+            "Call a tool on an MCP (Model Context Protocol) server. \
+             You MUST specify the server name, the tool name, and the tool's arguments.",
         );
         if config.servers.is_empty() {
             return desc;
         }
-        desc.push_str(" Available servers:");
+        desc.push_str("\n\nAvailable servers and tools:");
         for server in &config.servers {
-            let _ = write!(desc, "\n- \"{}\" ({})", server.name, server.command);
-            if !server.allowed_tools.is_empty() {
-                let _ = write!(desc, " tools: [{}]", server.allowed_tools.join(", "));
-            }
+            let _ = write!(desc, "\n\n## Server: \"{}\"", server.name);
             if let Some(ref notes) = server.notes {
-                let _ = write!(desc, " — {}", notes);
+                let _ = write!(desc, "\n{}", notes);
+            }
+            if server.allowed_tools.is_empty() {
+                desc.push_str("\nAll tools on this server are available.");
+            } else {
+                desc.push_str("\nAvailable tools:");
+                for tool_name in &server.allowed_tools {
+                    let _ = write!(desc, "\n- \"{}\"", tool_name);
+                }
             }
         }
         desc
@@ -162,18 +168,18 @@ impl Tool for McpTool {
             "properties": {
                 "server": {
                     "type": "string",
-                    "description": "Name of the MCP server to call"
+                    "description": "Name of the MCP server (e.g. \"codex\")"
                 },
                 "tool": {
                     "type": "string",
-                    "description": "Name of the tool to invoke on the MCP server"
+                    "description": "Name of the tool on that server. For codex: use \"codex\" to start a new session (requires {\"prompt\": \"...\"}), or \"codex-reply\" to continue an existing session (requires {\"threadId\": \"...\", \"prompt\": \"...\"})"
                 },
                 "arguments": {
                     "type": "object",
-                    "description": "Optional arguments to pass to the tool (must match the tool's input schema)"
+                    "description": "Arguments object passed to the tool. For the \"codex\" tool: {\"prompt\": \"your task\"} is required. For \"codex-reply\": {\"threadId\": \"...\", \"prompt\": \"follow-up\"} is required."
                 }
             },
-            "required": ["server", "tool"]
+            "required": ["server", "tool", "arguments"]
         });
         if !self.config.servers.is_empty() {
             let names: Vec<&str> = self
@@ -369,6 +375,7 @@ mod tests {
         let required = schema["required"].as_array().unwrap();
         assert!(required.contains(&json!("server")));
         assert!(required.contains(&json!("tool")));
+        assert!(required.contains(&json!("arguments")));
     }
 
     #[test]
@@ -385,20 +392,20 @@ mod tests {
     fn mcp_tool_description_lists_servers() {
         let tool = McpTool::new(test_security(AutonomyLevel::Full, 100), test_config());
         let desc = tool.description();
-        assert!(desc.contains("\"codex\""));
-        assert!(desc.contains("codex"));
-        assert!(desc.contains("tools: [codex, codex-reply]"));
+        assert!(desc.contains("Server: \"codex\""));
+        assert!(desc.contains("\"codex-reply\""));
         assert!(desc.contains("OpenAI Codex coding agent"));
-        assert!(desc.contains("\"filesystem\""));
-        assert!(desc.contains("mcp-server-fs"));
+        assert!(desc.contains("Server: \"filesystem\""));
+        assert!(desc.contains("All tools on this server are available"));
     }
 
     #[test]
     fn mcp_tool_description_omits_notes_when_none() {
         let tool = McpTool::new(test_security(AutonomyLevel::Full, 100), test_config());
         let desc = tool.description();
-        let fs_line = desc.lines().find(|l| l.contains("\"filesystem\"")).unwrap();
-        assert!(!fs_line.contains(" — "));
+        // filesystem server has no notes — should not appear between header and tools line
+        assert!(desc.contains("Server: \"filesystem\""));
+        assert!(!desc.contains("mcp-server-fs"));
     }
 
     #[test]
