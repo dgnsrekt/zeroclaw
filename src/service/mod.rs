@@ -191,11 +191,11 @@ fn install_macos(config: &Config) -> Result<()> {
     }
 
     let exe = std::env::current_exe().context("Failed to resolve current executable")?;
-    let logs_dir = config
+    let config_dir = config
         .config_path
         .parent()
-        .map_or_else(|| PathBuf::from("."), PathBuf::from)
-        .join("logs");
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let logs_dir = config_dir.join("logs");
     fs::create_dir_all(&logs_dir)?;
 
     let stdout = logs_dir.join("daemon.stdout.log");
@@ -217,6 +217,8 @@ fn install_macos(config: &Config) -> Result<()> {
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>WorkingDirectory</key>
+  <string>{working_dir}</string>
   <key>StandardOutPath</key>
   <string>{stdout}</string>
   <key>StandardErrorPath</key>
@@ -226,6 +228,7 @@ fn install_macos(config: &Config) -> Result<()> {
 "#,
         label = SERVICE_LABEL,
         exe = xml_escape(&exe.display().to_string()),
+        working_dir = xml_escape(&config_dir.display().to_string()),
         stdout = xml_escape(&stdout.display().to_string()),
         stderr = xml_escape(&stderr.display().to_string())
     );
@@ -243,9 +246,14 @@ fn install_linux(config: &Config) -> Result<()> {
     }
 
     let exe = std::env::current_exe().context("Failed to resolve current executable")?;
+    let config_dir = config
+        .config_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
     let unit = format!(
-        "[Unit]\nDescription=ZeroClaw daemon\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} daemon\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
-        exe.display()
+        "[Unit]\nDescription=ZeroClaw daemon\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={exe} daemon\nWorkingDirectory={working_dir}\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
+        exe = exe.display(),
+        working_dir = config_dir.display()
     );
 
     fs::write(&file, unit)?;

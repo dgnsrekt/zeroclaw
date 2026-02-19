@@ -485,6 +485,14 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Load .env files before logging so RUST_LOG from .env is respected.
+    // 1) ~/.zeroclaw/.env  — canonical for daemon/service mode
+    // 2) CWD .env          — standard convention for terminal/dev usage (overrides)
+    if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+        let _ = dotenvy::from_path(home.join(".zeroclaw").join(".env"));
+    }
+    let _ = dotenvy::dotenv();
+
     // Initialize logging - respects RUST_LOG env var, defaults to INFO
     let subscriber = fmt::Subscriber::builder()
         .with_env_filter(
