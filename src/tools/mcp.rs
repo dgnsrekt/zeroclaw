@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio::process::Command;
+use tracing::{debug, warn};
 
 type McpClient = RunningService<rmcp::RoleClient, ()>;
 
@@ -248,6 +249,13 @@ impl Tool for McpTool {
 
         let tool_timeout_secs = server.tool_timeout_secs;
 
+        debug!(
+            server = server_name,
+            tool = tool_name,
+            arguments = %args.get("arguments").unwrap_or(&json!(null)),
+            "MCP tool call dispatching"
+        );
+
         let handle = match self.get_or_connect(server).await {
             Ok(h) => h,
             Err(e) => {
@@ -276,6 +284,13 @@ impl Tool for McpTool {
             Ok(Ok(result)) => {
                 let is_error = result.is_error.unwrap_or(false);
                 let text = Self::extract_text_from_content(&result.content);
+                debug!(
+                    server = server_name,
+                    tool = tool_name,
+                    is_error,
+                    output_len = text.len(),
+                    "MCP tool call completed"
+                );
                 let error = if is_error {
                     Some(if text.is_empty() {
                         format!("MCP tool '{}' returned an error", tool_name)
@@ -291,22 +306,38 @@ impl Tool for McpTool {
                     error,
                 })
             }
-            Ok(Err(e)) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "MCP tool call '{}' on server '{}' failed: {}",
-                    tool_name, server_name, e
-                )),
-            }),
-            Err(_) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "MCP tool call '{}' on server '{}' timed out after {}s",
-                    tool_name, server_name, tool_timeout_secs
-                )),
-            }),
+            Ok(Err(e)) => {
+                warn!(
+                    server = server_name,
+                    tool = tool_name,
+                    error = %e,
+                    "MCP tool call failed"
+                );
+                Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!(
+                        "MCP tool call '{}' on server '{}' failed: {}",
+                        tool_name, server_name, e
+                    )),
+                })
+            }
+            Err(_) => {
+                warn!(
+                    server = server_name,
+                    tool = tool_name,
+                    timeout_secs = tool_timeout_secs,
+                    "MCP tool call timed out"
+                );
+                Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(format!(
+                        "MCP tool call '{}' on server '{}' timed out after {}s",
+                        tool_name, server_name, tool_timeout_secs
+                    )),
+                })
+            }
         }
     }
 }
