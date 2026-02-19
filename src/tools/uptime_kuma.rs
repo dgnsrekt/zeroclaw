@@ -202,10 +202,11 @@ fn format_status_response(
     };
 
     let mut output = String::new();
+    let _ = writeln!(output, "Queried at: {} UTC", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"));
 
     // Parse heartbeatList: { "monitor_id": [ { status, msg, ping, ... }, ... ] }
     if let Some(heartbeat_list) = parsed.get("heartbeatList").and_then(|v| v.as_object()) {
-        let _ = writeln!(output, "=== Monitor Status ===");
+        let _ = writeln!(output, "\n=== Monitor Status ===");
         for (monitor_id, beats) in heartbeat_list {
             if let Some(latest) = beats.as_array().and_then(|a| a.last()) {
                 let status_code = latest.get("status").and_then(|v| v.as_i64()).unwrap_or(-1);
@@ -614,6 +615,8 @@ mod tests {
         .to_string();
 
         let output = format_status_response(&body, &names);
+        assert!(output.contains("Queried at:"));
+        assert!(output.contains("UTC"));
         assert!(output.contains("[UP]"));
         assert!(output.contains("API Server"));
         assert!(output.contains("[DOWN]"));
