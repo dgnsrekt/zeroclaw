@@ -1532,10 +1532,14 @@ pub struct AutonomyConfig {
     /// Tools that always require interactive approval, even after "Always".
     #[serde(default = "default_always_ask")]
     pub always_ask: Vec<String>,
+
+    /// Environment variables the agent is allowed to read via the `env_get` tool.
+    #[serde(default)]
+    pub allowed_env_vars: Vec<String>,
 }
 
 fn default_auto_approve() -> Vec<String> {
-    vec!["file_read".into(), "memory_recall".into()]
+    vec!["file_read".into(), "memory_recall".into(), "env_get".into()]
 }
 
 fn default_always_ask() -> Vec<String> {
@@ -1587,6 +1591,7 @@ impl Default for AutonomyConfig {
             block_high_risk_commands: true,
             auto_approve: default_auto_approve(),
             always_ask: default_always_ask(),
+            allowed_env_vars: vec![],
         }
     }
 }
@@ -3206,6 +3211,7 @@ default_temperature = 0.7
                 block_high_risk_commands: true,
                 auto_approve: vec!["file_read".into()],
                 always_ask: vec![],
+                allowed_env_vars: vec![],
             },
             runtime: RuntimeConfig {
                 kind: "docker".into(),

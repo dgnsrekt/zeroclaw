@@ -88,6 +88,7 @@ pub struct SecurityPolicy {
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
+    pub allowed_env_vars: Vec<String>,
     pub tracker: ActionTracker,
 }
 
@@ -137,6 +138,7 @@ impl Default for SecurityPolicy {
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
+            allowed_env_vars: vec![],
             tracker: ActionTracker::new(),
         }
     }
@@ -576,6 +578,11 @@ impl SecurityPolicy {
         self.tracker.count() >= self.max_actions_per_hour as usize
     }
 
+    /// Check if an environment variable is on the allowlist.
+    pub fn is_env_var_allowed(&self, name: &str) -> bool {
+        self.allowed_env_vars.iter().any(|v| v == name)
+    }
+
     /// Build from config sections
     pub fn from_config(
         autonomy_config: &crate::config::AutonomyConfig,
@@ -591,6 +598,7 @@ impl SecurityPolicy {
             max_cost_per_day_cents: autonomy_config.max_cost_per_day_cents,
             require_approval_for_medium_risk: autonomy_config.require_approval_for_medium_risk,
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
+            allowed_env_vars: autonomy_config.allowed_env_vars.clone(),
             tracker: ActionTracker::new(),
         }
     }
