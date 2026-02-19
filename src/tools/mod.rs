@@ -160,11 +160,14 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
-        Box::new(PushoverTool::new(
+    ];
+
+    if root_config.pushover.enabled {
+        tools.push(Box::new(PushoverTool::new(
             security.clone(),
             workspace_dir.to_path_buf(),
-        )),
-    ];
+        )));
+    }
 
     if root_config.ntfy.enabled && !root_config.ntfy.targets.is_empty() {
         tools.push(Box::new(NtfyTool::new(
@@ -324,7 +327,7 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(!names.contains(&"browser_open"));
         assert!(names.contains(&"schedule"));
-        assert!(names.contains(&"pushover"));
+        assert!(!names.contains(&"pushover"));
         assert!(names.contains(&"proxy_config"));
     }
 
@@ -363,7 +366,7 @@ mod tests {
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"browser_open"));
-        assert!(names.contains(&"pushover"));
+        assert!(!names.contains(&"pushover"));
         assert!(names.contains(&"proxy_config"));
     }
 

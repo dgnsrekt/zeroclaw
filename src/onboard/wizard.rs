@@ -145,6 +145,7 @@ pub fn run_wizard() -> Result<Config> {
         ntfy: crate::config::NtfyConfig::default(),
         a2a: crate::config::A2aConfig::default(),
         uptime_kuma: crate::config::UptimeKumaConfig::default(),
+        pushover: crate::config::PushoverConfig::default(),
     };
 
     println!(
@@ -374,6 +375,7 @@ pub fn run_quick_setup(
         ntfy: crate::config::NtfyConfig::default(),
         a2a: crate::config::A2aConfig::default(),
         uptime_kuma: crate::config::UptimeKumaConfig::default(),
+        pushover: crate::config::PushoverConfig::default(),
     };
 
     config.save()?;

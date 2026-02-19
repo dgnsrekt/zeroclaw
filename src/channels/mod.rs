@@ -904,13 +904,7 @@ pub fn build_system_prompt(
         for (name, desc) in tools {
             let _ = writeln!(prompt, "- **{name}**: {desc}");
         }
-        prompt.push_str("\n## Tool Use Protocol\n\n");
-        prompt.push_str("To use a tool, wrap a JSON object in <tool_call></tool_call> tags:\n\n");
-        prompt.push_str("```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n");
-        prompt.push_str("You may use multiple tool calls in a single response. ");
-        prompt.push_str("After tool execution, results appear in <tool_result> tags. ");
-        prompt
-            .push_str("Continue reasoning with the results until you can give a final answer.\n\n");
+        prompt.push('\n');
     }
 
     // ── 1b. Hardware (when gpio/arduino tools present) ───────────
@@ -1603,10 +1597,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
         "schedule",
         "Manage scheduled tasks (create/list/get/cancel/pause/resume). Supports recurring cron and one-shot delays.",
     ));
-    tool_descs.push((
-        "pushover",
-        "Send a Pushover notification to your device. Requires PUSHOVER_TOKEN and PUSHOVER_USER_KEY in .env file.",
-    ));
+    if config.pushover.enabled {
+        tool_descs.push((
+            "pushover",
+            "Send a Pushover notification to your device. Requires PUSHOVER_TOKEN and PUSHOVER_USER_KEY in .env file.",
+        ));
+    }
     if !config.agents.is_empty() {
         tool_descs.push((
             "delegate",

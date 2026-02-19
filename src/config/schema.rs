@@ -156,6 +156,10 @@ pub struct Config {
     /// Uptime Kuma monitoring configuration.
     #[serde(default)]
     pub uptime_kuma: UptimeKumaConfig,
+
+    /// Pushover push notification configuration.
+    #[serde(default)]
+    pub pushover: PushoverConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -376,6 +380,14 @@ impl Default for UptimeKumaConfig {
             targets: Vec::new(),
         }
     }
+}
+
+// ── Pushover Notifications ────────────────────────────────────────
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PushoverConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2576,6 +2588,7 @@ impl Default for Config {
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
+            pushover: PushoverConfig::default(),
         }
     }
 }
@@ -3409,6 +3422,7 @@ default_temperature = 0.7
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
+            pushover: PushoverConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3552,6 +3566,7 @@ tool_dispatcher = "xml"
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
             uptime_kuma: UptimeKumaConfig::default(),
+            pushover: PushoverConfig::default(),
         };
 
         config.save().unwrap();
