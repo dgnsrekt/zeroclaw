@@ -31,6 +31,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.browser",
     "tool.composio",
     "tool.http_request",
+    "tool.ntfy",
     "tool.pushover",
     "memory.embeddings",
     "tunnel.custom",
@@ -141,6 +142,10 @@ pub struct Config {
     /// Hardware configuration (wizard-driven physical world setup).
     #[serde(default)]
     pub hardware: HardwareConfig,
+
+    /// ntfy push notification configuration.
+    #[serde(default)]
+    pub ntfy: NtfyConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -236,6 +241,42 @@ impl Default for HardwareConfig {
             baud_rate: default_baud_rate(),
             probe_target: None,
             workspace_datasheets: false,
+        }
+    }
+}
+
+// ── ntfy push notifications ─────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtfyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub default_target: Option<String>,
+    #[serde(default = "default_ntfy_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub targets: Vec<NtfyTargetConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtfyTargetConfig {
+    pub name: String,
+    pub host: String,
+    pub topic: String,
+}
+
+fn default_ntfy_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for NtfyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_target: None,
+            timeout_secs: default_ntfy_timeout_secs(),
+            targets: Vec::new(),
         }
     }
 }
@@ -2435,6 +2476,7 @@ impl Default for Config {
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
+            ntfy: NtfyConfig::default(),
         }
     }
 }
@@ -3265,6 +3307,7 @@ default_temperature = 0.7
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            ntfy: NtfyConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3405,6 +3448,7 @@ tool_dispatcher = "xml"
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            ntfy: NtfyConfig::default(),
         };
 
         config.save().unwrap();

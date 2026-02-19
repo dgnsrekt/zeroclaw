@@ -20,6 +20,7 @@ pub mod image_info;
 pub mod memory_forget;
 pub mod memory_recall;
 pub mod memory_store;
+pub mod ntfy;
 pub mod proxy_config;
 pub mod pushover;
 pub mod schedule;
@@ -51,6 +52,7 @@ pub use image_info::ImageInfoTool;
 pub use memory_forget::MemoryForgetTool;
 pub use memory_recall::MemoryRecallTool;
 pub use memory_store::MemoryStoreTool;
+pub use ntfy::NtfyTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
 pub use schedule::ScheduleTool;
@@ -159,6 +161,13 @@ pub fn all_tools_with_runtime(
             workspace_dir.to_path_buf(),
         )),
     ];
+
+    if root_config.ntfy.enabled && !root_config.ntfy.targets.is_empty() {
+        tools.push(Box::new(NtfyTool::new(
+            security.clone(),
+            root_config.ntfy.clone(),
+        )));
+    }
 
     if browser_config.enabled {
         // Add legacy browser_open tool for simple URL opening
