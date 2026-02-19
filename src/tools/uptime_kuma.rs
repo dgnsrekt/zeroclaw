@@ -65,11 +65,7 @@ impl UptimeKumaTool {
         &self,
         target: &crate::config::UptimeKumaTarget,
     ) -> anyhow::Result<ToolResult> {
-        let url = format!(
-            "{}/api/status-page/{}",
-            target.base_url.trim_end_matches('/'),
-            target.slug
-        );
+        let base = target.base_url.trim_end_matches('/');
 
         let client = crate::config::build_runtime_proxy_client_with_timeouts(
             "tool.uptime_kuma",
@@ -77,22 +73,48 @@ impl UptimeKumaTool {
             self.config.connect_timeout_secs,
         );
 
-        let response = client.get(&url).send().await?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+        // Fetch config (monitor names) and heartbeats in parallel
+        let config_url = format!("{}/api/status-page/{}", base, target.slug);
+        let heartbeat_url = format!("{}/api/status-page/heartbeat/{}", base, target.slug);
 
-        if status.is_success() {
-            Ok(ToolResult {
-                success: true,
-                output: format_status_response(&body),
-                error: None,
-            })
-        } else {
-            Ok(ToolResult {
+        let (config_resp, heartbeat_resp) = tokio::join!(
+            client.get(&config_url).send(),
+            client.get(&heartbeat_url).send(),
+        );
+
+        // Build monitor ID -> name map from config response
+        let monitor_names = match config_resp {
+            Ok(resp) if resp.status().is_success() => {
+                let body = resp.text().await.unwrap_or_default();
+                extract_monitor_names(&body)
+            }
+            _ => std::collections::HashMap::new(),
+        };
+
+        // Parse heartbeat response for actual status
+        match heartbeat_resp {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if status.is_success() {
+                    Ok(ToolResult {
+                        success: true,
+                        output: format_status_response(&body, &monitor_names),
+                        error: None,
+                    })
+                } else {
+                    Ok(ToolResult {
+                        success: false,
+                        output: body,
+                        error: Some(format!("Uptime Kuma API returned status {}", status)),
+                    })
+                }
+            }
+            Err(e) => Ok(ToolResult {
                 success: false,
-                output: body,
-                error: Some(format!("Uptime Kuma API returned status {}", status)),
-            })
+                output: String::new(),
+                error: Some(format!("Failed to fetch heartbeat data: {}", e)),
+            }),
         }
     }
 
@@ -145,7 +167,35 @@ impl UptimeKumaTool {
     }
 }
 
-fn format_status_response(body: &str) -> String {
+/// Extract monitor ID -> name map from the config endpoint response.
+/// The config response has `publicGroupList[].monitorList[].{id, name}`.
+fn extract_monitor_names(body: &str) -> std::collections::HashMap<String, String> {
+    let mut names = std::collections::HashMap::new();
+    let parsed: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return names,
+    };
+    if let Some(groups) = parsed.get("publicGroupList").and_then(|v| v.as_array()) {
+        for group in groups {
+            if let Some(monitors) = group.get("monitorList").and_then(|v| v.as_array()) {
+                for monitor in monitors {
+                    if let (Some(id), Some(name)) = (
+                        monitor.get("id").and_then(|v| v.as_i64()),
+                        monitor.get("name").and_then(|v| v.as_str()),
+                    ) {
+                        names.insert(id.to_string(), name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn format_status_response(
+    body: &str,
+    monitor_names: &std::collections::HashMap<String, String>,
+) -> String {
     let parsed: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return format!("Raw response:\n{}", body),
@@ -169,7 +219,11 @@ fn format_status_response(body: &str) -> String {
                 let msg = latest.get("msg").and_then(|v| v.as_str()).unwrap_or("");
                 let ping = latest.get("ping").and_then(|v| v.as_i64());
 
-                let _ = write!(output, "\n[{}] Monitor {}", status_label, monitor_id);
+                let display_name = monitor_names
+                    .get(monitor_id)
+                    .map(|n| n.as_str())
+                    .unwrap_or(monitor_id);
+                let _ = write!(output, "\n[{}] {}", status_label, display_name);
                 if !msg.is_empty() {
                     let _ = write!(output, " — {}", msg);
                 }
@@ -186,7 +240,22 @@ fn format_status_response(body: &str) -> String {
             let _ = write!(output, "\n\n=== Uptime ===");
             for (key, value) in uptime_list {
                 let pct = value.as_f64().unwrap_or(0.0) * 100.0;
-                let _ = write!(output, "\n  {}: {:.2}%", key, pct);
+                // key format is "monitorId_hours" — resolve the name
+                let parts: Vec<&str> = key.rsplitn(2, '_').collect();
+                let label = if parts.len() == 2 {
+                    let id = parts[1];
+                    let period = parts[0];
+                    let period_label = match period {
+                        "24" => "24h",
+                        "720" => "30d",
+                        other => other,
+                    };
+                    let name = monitor_names.get(id).map(|n| n.as_str()).unwrap_or(id);
+                    format!("{} ({})", name, period_label)
+                } else {
+                    key.clone()
+                };
+                let _ = write!(output, "\n  {}: {:.2}%", label, pct);
             }
         }
     }
@@ -524,6 +593,10 @@ mod tests {
 
     #[test]
     fn format_status_response_parses_json() {
+        let mut names = std::collections::HashMap::new();
+        names.insert("1".to_string(), "API Server".to_string());
+        names.insert("2".to_string(), "Database".to_string());
+
         let body = json!({
             "heartbeatList": {
                 "1": [
@@ -540,32 +613,59 @@ mod tests {
         })
         .to_string();
 
-        let output = format_status_response(&body);
+        let output = format_status_response(&body, &names);
         assert!(output.contains("[UP]"));
+        assert!(output.contains("API Server"));
         assert!(output.contains("[DOWN]"));
+        assert!(output.contains("Database"));
         assert!(output.contains("200 - OK"));
         assert!(output.contains("42ms"));
         assert!(output.contains("Connection refused"));
         assert!(output.contains("99.80%"));
         assert!(output.contains("99.50%"));
+        assert!(output.contains("24h"));
+        assert!(output.contains("30d"));
     }
 
     #[test]
     fn format_status_response_handles_invalid_json() {
-        let output = format_status_response("not json at all");
+        let names = std::collections::HashMap::new();
+        let output = format_status_response("not json at all", &names);
         assert!(output.contains("Raw response:"));
         assert!(output.contains("not json at all"));
     }
 
     #[test]
     fn format_status_response_handles_empty_heartbeats() {
+        let names = std::collections::HashMap::new();
         let body = json!({
             "heartbeatList": {},
             "uptimeList": {}
         })
         .to_string();
 
-        let output = format_status_response(&body);
+        let output = format_status_response(&body, &names);
         assert!(output.contains("Monitor Status"));
+    }
+
+    #[test]
+    fn extract_monitor_names_from_config() {
+        let body = json!({
+            "config": {"slug": "test"},
+            "publicGroupList": [{
+                "id": 1,
+                "name": "Services",
+                "monitorList": [
+                    {"id": 1, "name": "API Server", "type": "http"},
+                    {"id": 3, "name": "Database", "type": "postgres"}
+                ]
+            }]
+        })
+        .to_string();
+
+        let names = extract_monitor_names(&body);
+        assert_eq!(names.get("1").unwrap(), "API Server");
+        assert_eq!(names.get("3").unwrap(), "Database");
+        assert_eq!(names.len(), 2);
     }
 }
