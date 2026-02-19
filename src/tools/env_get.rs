@@ -7,11 +7,23 @@ use std::sync::Arc;
 /// Read an environment variable by name (only allowlisted variables).
 pub struct EnvGetTool {
     security: Arc<SecurityPolicy>,
+    description: String,
 }
 
 impl EnvGetTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
-        Self { security }
+        let description = if security.allowed_env_vars.is_empty() {
+            "Read an environment variable by name. No variables are currently allowlisted.".into()
+        } else {
+            format!(
+                "Read an environment variable by name. Allowed variables: {}",
+                security.allowed_env_vars.join(", ")
+            )
+        };
+        Self {
+            security,
+            description,
+        }
     }
 }
 
@@ -22,11 +34,11 @@ impl Tool for EnvGetTool {
     }
 
     fn description(&self) -> &str {
-        "Read an environment variable by name (only allowlisted variables)"
+        &self.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "name": {
@@ -35,7 +47,11 @@ impl Tool for EnvGetTool {
                 }
             },
             "required": ["name"]
-        })
+        });
+        if !self.security.allowed_env_vars.is_empty() {
+            schema["properties"]["name"]["enum"] = json!(self.security.allowed_env_vars);
+        }
+        schema
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -112,6 +128,19 @@ mod tests {
     }
 
     #[test]
+    fn env_get_description_shows_allowed_vars() {
+        let tool = EnvGetTool::new(test_security(vec!["FOO".into(), "BAR".into()]));
+        assert!(tool.description().contains("FOO"));
+        assert!(tool.description().contains("BAR"));
+    }
+
+    #[test]
+    fn env_get_description_empty_allowlist() {
+        let tool = EnvGetTool::new(test_security(vec![]));
+        assert!(tool.description().contains("No variables"));
+    }
+
+    #[test]
     fn env_get_schema_has_name() {
         let tool = EnvGetTool::new(test_security(vec![]));
         let schema = tool.parameters_schema();
@@ -120,6 +149,21 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("name")));
+    }
+
+    #[test]
+    fn env_get_schema_includes_enum_when_allowlisted() {
+        let tool = EnvGetTool::new(test_security(vec!["MY_VAR".into()]));
+        let schema = tool.parameters_schema();
+        let allowed = schema["properties"]["name"]["enum"].as_array().unwrap();
+        assert_eq!(allowed, &vec![json!("MY_VAR")]);
+    }
+
+    #[test]
+    fn env_get_schema_no_enum_when_empty() {
+        let tool = EnvGetTool::new(test_security(vec![]));
+        let schema = tool.parameters_schema();
+        assert!(schema["properties"]["name"]["enum"].is_null());
     }
 
     #[tokio::test]
