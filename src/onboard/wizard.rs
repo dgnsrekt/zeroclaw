@@ -144,6 +144,7 @@ pub fn run_wizard() -> Result<Config> {
         query_classification: crate::config::QueryClassificationConfig::default(),
         ntfy: crate::config::NtfyConfig::default(),
         a2a: crate::config::A2aConfig::default(),
+        uptime_kuma: crate::config::UptimeKumaConfig::default(),
     };
 
     println!(
@@ -372,6 +373,7 @@ pub fn run_quick_setup(
         query_classification: crate::config::QueryClassificationConfig::default(),
         ntfy: crate::config::NtfyConfig::default(),
         a2a: crate::config::A2aConfig::default(),
+        uptime_kuma: crate::config::UptimeKumaConfig::default(),
     };
 
     config.save()?;

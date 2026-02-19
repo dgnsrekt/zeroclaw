@@ -29,6 +29,7 @@ pub mod schema;
 pub mod screenshot;
 pub mod shell;
 pub mod traits;
+pub mod uptime_kuma;
 pub mod web_search_tool;
 
 pub use a2a_agent::A2aAgentTool;
@@ -65,6 +66,7 @@ pub use shell::ShellTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};
+pub use uptime_kuma::UptimeKumaTool;
 pub use web_search_tool::WebSearchTool;
 
 use crate::config::{Config, DelegateAgentConfig};
@@ -175,6 +177,13 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(A2aAgentTool::new(
             security.clone(),
             root_config.a2a.clone(),
+        )));
+    }
+
+    if root_config.uptime_kuma.enabled && !root_config.uptime_kuma.targets.is_empty() {
+        tools.push(Box::new(UptimeKumaTool::new(
+            security.clone(),
+            root_config.uptime_kuma.clone(),
         )));
     }
 

@@ -34,6 +34,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.a2a",
     "tool.ntfy",
     "tool.pushover",
+    "tool.uptime_kuma",
     "memory.embeddings",
     "tunnel.custom",
 ];
@@ -151,6 +152,10 @@ pub struct Config {
     /// A2A (Agent-to-Agent) protocol configuration for remote agent communication.
     #[serde(default)]
     pub a2a: A2aConfig,
+
+    /// Uptime Kuma monitoring configuration.
+    #[serde(default)]
+    pub uptime_kuma: UptimeKumaConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -326,6 +331,48 @@ impl Default for A2aConfig {
             enabled: false,
             timeout_secs: default_a2a_timeout_secs(),
             connect_timeout_secs: default_a2a_connect_timeout_secs(),
+            targets: Vec::new(),
+        }
+    }
+}
+
+// ── Uptime Kuma Monitoring ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UptimeKumaConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_uptime_kuma_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_uptime_kuma_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default)]
+    pub targets: Vec<UptimeKumaTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UptimeKumaTarget {
+    pub name: String,
+    pub base_url: String,
+    pub slug: String,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn default_uptime_kuma_timeout_secs() -> u64 {
+    30
+}
+
+fn default_uptime_kuma_connect_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for UptimeKumaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_uptime_kuma_timeout_secs(),
+            connect_timeout_secs: default_uptime_kuma_connect_timeout_secs(),
             targets: Vec::new(),
         }
     }
@@ -2528,6 +2575,7 @@ impl Default for Config {
             query_classification: QueryClassificationConfig::default(),
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
+            uptime_kuma: UptimeKumaConfig::default(),
         }
     }
 }
@@ -3360,6 +3408,7 @@ default_temperature = 0.7
             hardware: HardwareConfig::default(),
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
+            uptime_kuma: UptimeKumaConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3502,6 +3551,7 @@ tool_dispatcher = "xml"
             hardware: HardwareConfig::default(),
             ntfy: NtfyConfig::default(),
             a2a: A2aConfig::default(),
+            uptime_kuma: UptimeKumaConfig::default(),
         };
 
         config.save().unwrap();

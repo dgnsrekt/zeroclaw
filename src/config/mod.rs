@@ -13,7 +13,7 @@ pub use schema::{
     ProxyScope, QueryClassificationConfig, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
     SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig, SlackConfig,
     StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig,
-    TunnelConfig, WebSearchConfig, WebhookConfig,
+    TunnelConfig, UptimeKumaConfig, UptimeKumaTarget, WebSearchConfig, WebhookConfig,
 };
 
 #[cfg(test)]
