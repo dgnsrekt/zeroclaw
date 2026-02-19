@@ -147,6 +147,7 @@ pub fn run_wizard() -> Result<Config> {
         uptime_kuma: crate::config::UptimeKumaConfig::default(),
         pushover: crate::config::PushoverConfig::default(),
         rss_feed: crate::config::RssFeedConfig::default(),
+        mcp: crate::config::McpConfig::default(),
     };
 
     println!(
@@ -378,6 +379,7 @@ pub fn run_quick_setup(
         uptime_kuma: crate::config::UptimeKumaConfig::default(),
         pushover: crate::config::PushoverConfig::default(),
         rss_feed: crate::config::RssFeedConfig::default(),
+        mcp: crate::config::McpConfig::default(),
     };
 
     config.save()?;

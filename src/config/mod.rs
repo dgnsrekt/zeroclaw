@@ -8,13 +8,13 @@ pub use schema::{
     BrowserConfig, ChannelsConfig, ClassificationRule, ComposioConfig, Config, CostConfig,
     CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, GatewayConfig,
     HardwareConfig, HardwareTransport, HeartbeatConfig, HttpRequestConfig, IMessageConfig,
-    IdentityConfig, LarkConfig, MatrixConfig, MemoryConfig, ModelRouteConfig, NtfyConfig,
-    NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig, PeripheralsConfig, ProxyConfig,
-    ProxyScope, PushoverConfig, QueryClassificationConfig, ReliabilityConfig, ResourceLimitsConfig,
-    RssFeedConfig, RssFeedEntry, RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig,
-    SecretsConfig, SecurityConfig, SlackConfig, StorageConfig, StorageProviderConfig,
-    StorageProviderSection, StreamMode, TelegramConfig, TunnelConfig, UptimeKumaConfig,
-    UptimeKumaTarget, WebSearchConfig, WebhookConfig,
+    IdentityConfig, LarkConfig, MatrixConfig, McpConfig, McpServerConfig, MemoryConfig,
+    ModelRouteConfig, NtfyConfig, NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig,
+    PeripheralsConfig, ProxyConfig, ProxyScope, PushoverConfig, QueryClassificationConfig,
+    ReliabilityConfig, ResourceLimitsConfig, RssFeedConfig, RssFeedEntry, RuntimeConfig,
+    SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig, SlackConfig,
+    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig,
+    TunnelConfig, UptimeKumaConfig, UptimeKumaTarget, WebSearchConfig, WebhookConfig,
 };
 
 #[cfg(test)]

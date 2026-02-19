@@ -32,6 +32,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.composio",
     "tool.http_request",
     "tool.a2a",
+    "tool.mcp",
     "tool.ntfy",
     "tool.pushover",
     "tool.uptime_kuma",
@@ -164,6 +165,10 @@ pub struct Config {
     /// RSS feed reader configuration.
     #[serde(default)]
     pub rss_feed: RssFeedConfig,
+
+    /// MCP (Model Context Protocol) client configuration.
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -444,6 +449,41 @@ impl Default for RssFeedConfig {
 pub struct PushoverConfig {
     #[serde(default)]
     pub enabled: bool,
+}
+
+// ── MCP (Model Context Protocol) Client ──────────────────────────
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Whitelist of tool names exposed. Empty = all tools allowed.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default = "default_mcp_tool_timeout_secs")]
+    pub tool_timeout_secs: u64,
+    #[serde(default = "default_mcp_startup_timeout_secs")]
+    pub startup_timeout_secs: u64,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn default_mcp_tool_timeout_secs() -> u64 {
+    120
+}
+
+fn default_mcp_startup_timeout_secs() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2650,6 +2690,7 @@ impl Default for Config {
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
 }
@@ -3495,6 +3536,7 @@ default_temperature = 0.7
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
+            mcp: McpConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3640,6 +3682,7 @@ tool_dispatcher = "xml"
             uptime_kuma: UptimeKumaConfig::default(),
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
+            mcp: McpConfig::default(),
         };
 
         config.save().unwrap();
