@@ -31,6 +31,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.browser",
     "tool.composio",
     "tool.http_request",
+    "tool.a2a",
     "tool.ntfy",
     "tool.pushover",
     "memory.embeddings",
@@ -146,6 +147,10 @@ pub struct Config {
     /// ntfy push notification configuration.
     #[serde(default)]
     pub ntfy: NtfyConfig,
+
+    /// A2A (Agent-to-Agent) protocol configuration for remote agent communication.
+    #[serde(default)]
+    pub a2a: A2aConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -278,6 +283,49 @@ impl Default for NtfyConfig {
             enabled: false,
             default_target: None,
             timeout_secs: default_ntfy_timeout_secs(),
+            targets: Vec::new(),
+        }
+    }
+}
+
+// ── A2A (Agent-to-Agent) Protocol ──────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct A2aConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_a2a_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_a2a_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default)]
+    pub targets: Vec<A2aAgentTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct A2aAgentTarget {
+    pub name: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn default_a2a_timeout_secs() -> u64 {
+    120
+}
+
+fn default_a2a_connect_timeout_secs() -> u64 {
+    10
+}
+
+impl Default for A2aConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_a2a_timeout_secs(),
+            connect_timeout_secs: default_a2a_connect_timeout_secs(),
             targets: Vec::new(),
         }
     }
@@ -2479,6 +2527,7 @@ impl Default for Config {
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
             ntfy: NtfyConfig::default(),
+            a2a: A2aConfig::default(),
         }
     }
 }
@@ -3310,6 +3359,7 @@ default_temperature = 0.7
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             ntfy: NtfyConfig::default(),
+            a2a: A2aConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3451,6 +3501,7 @@ tool_dispatcher = "xml"
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
             ntfy: NtfyConfig::default(),
+            a2a: A2aConfig::default(),
         };
 
         config.save().unwrap();

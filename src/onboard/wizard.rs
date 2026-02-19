@@ -143,6 +143,7 @@ pub fn run_wizard() -> Result<Config> {
         hardware: hardware_config,
         query_classification: crate::config::QueryClassificationConfig::default(),
         ntfy: crate::config::NtfyConfig::default(),
+        a2a: crate::config::A2aConfig::default(),
     };
 
     println!(
@@ -370,6 +371,7 @@ pub fn run_quick_setup(
         hardware: crate::config::HardwareConfig::default(),
         query_classification: crate::config::QueryClassificationConfig::default(),
         ntfy: crate::config::NtfyConfig::default(),
+        a2a: crate::config::A2aConfig::default(),
     };
 
     config.save()?;

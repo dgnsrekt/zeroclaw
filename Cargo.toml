@@ -78,6 +78,10 @@ parking_lot = "0.12"
 # Async traits
 async-trait = "0.1"
 
+# A2A (Agent-to-Agent) protocol client
+a2a-client = { version = "0.1", default-features = false }
+a2a-types = { version = "0.1", default-features = false }
+
 # HMAC-SHA256 (Zhipu/GLM JWT auth)
 ring = "0.17"
 
