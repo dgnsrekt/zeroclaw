@@ -3,6 +3,7 @@ use crate::config::NtfyConfig;
 use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 const NTFY_CONNECT_TIMEOUT_SECS: u64 = 10;
@@ -10,11 +11,35 @@ const NTFY_CONNECT_TIMEOUT_SECS: u64 = 10;
 pub struct NtfyTool {
     security: Arc<SecurityPolicy>,
     config: NtfyConfig,
+    description: String,
 }
 
 impl NtfyTool {
     pub fn new(security: Arc<SecurityPolicy>, config: NtfyConfig) -> Self {
-        Self { security, config }
+        let description = Self::build_description(&config);
+        Self {
+            security,
+            config,
+            description,
+        }
+    }
+
+    fn build_description(config: &NtfyConfig) -> String {
+        let mut desc = String::from("Send a push notification via ntfy.");
+        if config.targets.is_empty() {
+            return desc;
+        }
+        desc.push_str(" Available targets:");
+        for target in &config.targets {
+            let _ = write!(desc, "\n- \"{}\" (topic: {})", target.name, target.topic);
+            if let Some(ref notes) = target.notes {
+                let _ = write!(desc, " — {}", notes);
+            }
+        }
+        if let Some(ref default) = config.default_target {
+            let _ = write!(desc, "\nDefault target: {}", default);
+        }
+        desc
     }
 
     fn resolve_target(
@@ -51,11 +76,11 @@ impl Tool for NtfyTool {
     }
 
     fn description(&self) -> &str {
-        "Send a push notification via ntfy to a configured topic. Supports multiple named targets with different hosts and topics."
+        &self.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "message": {
@@ -86,7 +111,17 @@ impl Tool for NtfyTool {
                 }
             },
             "required": ["message"]
-        })
+        });
+        if !self.config.targets.is_empty() {
+            let names: Vec<&str> = self
+                .config
+                .targets
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect();
+            schema["properties"]["target"]["enum"] = json!(names);
+        }
+        schema
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -221,11 +256,13 @@ mod tests {
                     name: "alerts".to_string(),
                     host: "https://ntfy.sh".to_string(),
                     topic: "test-alerts".to_string(),
+                    notes: Some("Critical alerts only".to_string()),
                 },
                 NtfyTargetConfig {
                     name: "logs".to_string(),
                     host: "http://nas1-oryx.lan:2586".to_string(),
                     topic: "build-logs".to_string(),
+                    notes: None,
                 },
             ],
         }
@@ -335,6 +372,7 @@ mod tests {
                 name: "alerts".to_string(),
                 host: "https://ntfy.sh".to_string(),
                 topic: "test-alerts".to_string(),
+                notes: None,
             }],
         };
 
@@ -343,5 +381,36 @@ mod tests {
         let result = tool.execute(json!({"message": "hello"})).await.unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("No target specified"));
+    }
+
+    #[test]
+    fn ntfy_tool_description_lists_targets() {
+        let tool = NtfyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let desc = tool.description();
+        assert!(desc.contains("\"alerts\""));
+        assert!(desc.contains("test-alerts"));
+        assert!(desc.contains("Critical alerts only"));
+        assert!(desc.contains("\"logs\""));
+        assert!(desc.contains("build-logs"));
+        assert!(desc.contains("Default target: alerts"));
+    }
+
+    #[test]
+    fn ntfy_tool_description_omits_notes_when_none() {
+        let tool = NtfyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let desc = tool.description();
+        // The "logs" target has no notes — its line should end with the topic, no dash
+        let logs_line = desc.lines().find(|l| l.contains("\"logs\"")).unwrap();
+        assert!(!logs_line.contains(" — "));
+    }
+
+    #[test]
+    fn ntfy_tool_schema_enumerates_targets() {
+        let tool = NtfyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let schema = tool.parameters_schema();
+        let target_enum = schema["properties"]["target"]["enum"]
+            .as_array()
+            .expect("target should have enum");
+        assert_eq!(target_enum, &vec![json!("alerts"), json!("logs")]);
     }
 }

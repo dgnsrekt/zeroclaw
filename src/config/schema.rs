@@ -264,6 +264,8 @@ pub struct NtfyTargetConfig {
     pub name: String,
     pub host: String,
     pub topic: String,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 fn default_ntfy_timeout_secs() -> u64 {
