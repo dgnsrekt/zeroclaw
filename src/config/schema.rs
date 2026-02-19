@@ -922,12 +922,15 @@ pub struct WebSearchConfig {
     /// Enable `web_search_tool` for web searches
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Search provider: "duckduckgo" (free, no API key) or "brave" (requires API key)
+    /// Search provider: "duckduckgo" (free), "brave" (requires API key), or "searxng" (self-hosted)
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
     /// Brave Search API key (required if provider is "brave")
     #[serde(default)]
     pub brave_api_key: Option<String>,
+    /// SearXNG instance URL (required if provider is "searxng", e.g. "http://localhost:8888")
+    #[serde(default)]
+    pub searxng_url: Option<String>,
     /// Maximum results per search (1-10)
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
@@ -954,6 +957,7 @@ impl Default for WebSearchConfig {
             enabled: true,
             provider: default_web_search_provider(),
             brave_api_key: None,
+            searxng_url: None,
             max_results: default_web_search_max_results(),
             timeout_secs: default_web_search_timeout_secs(),
         }
@@ -2983,6 +2987,16 @@ impl Config {
             }
         }
 
+        // SearXNG URL: ZEROCLAW_SEARXNG_URL or SEARXNG_URL
+        if let Ok(url) =
+            std::env::var("ZEROCLAW_SEARXNG_URL").or_else(|_| std::env::var("SEARXNG_URL"))
+        {
+            let url = url.trim();
+            if !url.is_empty() {
+                self.web_search.searxng_url = Some(url.to_string());
+            }
+        }
+
         // Web search max results: ZEROCLAW_WEB_SEARCH_MAX_RESULTS or WEB_SEARCH_MAX_RESULTS
         if let Ok(max_results) = std::env::var("ZEROCLAW_WEB_SEARCH_MAX_RESULTS")
             .or_else(|_| std::env::var("WEB_SEARCH_MAX_RESULTS"))
@@ -4829,6 +4843,7 @@ default_model = "legacy-model"
         std::env::set_var("WEB_SEARCH_MAX_RESULTS", "7");
         std::env::set_var("WEB_SEARCH_TIMEOUT_SECS", "20");
         std::env::set_var("BRAVE_API_KEY", "brave-test-key");
+        std::env::set_var("SEARXNG_URL", "http://localhost:8888");
 
         config.apply_env_overrides();
 
@@ -4840,12 +4855,17 @@ default_model = "legacy-model"
             config.web_search.brave_api_key.as_deref(),
             Some("brave-test-key")
         );
+        assert_eq!(
+            config.web_search.searxng_url.as_deref(),
+            Some("http://localhost:8888")
+        );
 
         std::env::remove_var("WEB_SEARCH_ENABLED");
         std::env::remove_var("WEB_SEARCH_PROVIDER");
         std::env::remove_var("WEB_SEARCH_MAX_RESULTS");
         std::env::remove_var("WEB_SEARCH_TIMEOUT_SECS");
         std::env::remove_var("BRAVE_API_KEY");
+        std::env::remove_var("SEARXNG_URL");
     }
 
     #[test]
