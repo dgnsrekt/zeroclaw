@@ -408,11 +408,11 @@ async fn run_job_command_with_timeout(
         );
     }
 
-    if !security.is_command_allowed(&job.command) {
+    if let Some(reason) = security.command_block_reason(&job.command) {
         return (
             false,
             format!(
-                "blocked by security policy: command not allowed: {}",
+                "blocked by security policy: {reason}. Command: {}",
                 job.command
             ),
         );
@@ -561,7 +561,7 @@ mod tests {
         let (success, output) = run_job_command(&config, &security, &job).await;
         assert!(!success);
         assert!(output.contains("blocked by security policy"));
-        assert!(output.contains("command not allowed"));
+        assert!(output.contains("not in the allowed commands list"));
     }
 
     #[tokio::test]

@@ -344,7 +344,7 @@ impl SecurityPolicy {
         Ok(risk)
     }
 
-    /// Check if a shell command is allowed.
+    /// Return the reason a shell command would be blocked, or `None` if allowed.
     ///
     /// Validates the **entire** command string, not just the first word:
     /// - Blocks subshell operators (`` ` ``, `$(`) that hide arbitrary execution
@@ -353,9 +353,9 @@ impl SecurityPolicy {
     /// - Blocks single `&` background chaining (`&&` remains supported)
     /// - Blocks output redirections (`>`, `>>`) that could write outside workspace
     /// - Blocks dangerous arguments (e.g. `find -exec`, `git config`)
-    pub fn is_command_allowed(&self, command: &str) -> bool {
+    pub fn command_block_reason(&self, command: &str) -> Option<String> {
         if self.autonomy == AutonomyLevel::ReadOnly {
-            return false;
+            return Some("autonomy is read-only; shell commands are disabled".into());
         }
 
         // Block subshell/expansion operators — these allow hiding arbitrary
@@ -366,12 +366,18 @@ impl SecurityPolicy {
             || command.contains("<(")
             || command.contains(">(")
         {
-            return false;
+            return Some(
+                "command contains subshell/expansion operators ($(...), `...`, ${...}, <(...), >(...)) \
+                 which are blocked for security"
+                    .into(),
+            );
         }
 
         // Block output redirections — they can write to arbitrary paths
         if command.contains('>') {
-            return false;
+            return Some(
+                "command contains output redirection (>) which is blocked for security".into(),
+            );
         }
 
         // Block `tee` — it can write to arbitrary files, bypassing the
@@ -380,13 +386,18 @@ impl SecurityPolicy {
             .split_whitespace()
             .any(|w| w == "tee" || w.ends_with("/tee"))
         {
-            return false;
+            return Some(
+                "command contains 'tee' which can write to arbitrary files and is blocked for security"
+                    .into(),
+            );
         }
 
         // Block background command chaining (`&`), which can hide extra
         // sub-commands and outlive timeout expectations. Keep `&&` allowed.
         if contains_single_ampersand(command) {
-            return false;
+            return Some(
+                "command contains background operator (&); use && for chaining instead".into(),
+            );
         }
 
         // Split on command separators and validate each sub-command.
@@ -421,13 +432,20 @@ impl SecurityPolicy {
                 .iter()
                 .any(|allowed| allowed == base_cmd)
             {
-                return false;
+                return Some(format!(
+                    "command '{}' is not in the allowed commands list (allowed: {})",
+                    base_cmd,
+                    self.allowed_commands.join(", ")
+                ));
             }
 
             // Validate arguments for the command
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
             if !self.is_args_safe(base_cmd, &args) {
-                return false;
+                return Some(format!(
+                    "command '{}' has unsafe arguments that could allow arbitrary execution",
+                    base_cmd
+                ));
             }
         }
 
@@ -437,7 +455,19 @@ impl SecurityPolicy {
             s.split_whitespace().next().is_some_and(|w| !w.is_empty())
         });
 
-        has_cmd
+        if !has_cmd {
+            return Some("command is empty".into());
+        }
+
+        None
+    }
+
+    /// Check if a shell command is allowed.
+    ///
+    /// Thin wrapper around [`command_block_reason`] — returns `true` when the
+    /// command passes all policy checks, `false` otherwise.
+    pub fn is_command_allowed(&self, command: &str) -> bool {
+        self.command_block_reason(command).is_none()
     }
 
     /// Check for dangerous arguments that allow sub-command execution.

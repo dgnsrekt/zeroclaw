@@ -24,7 +24,9 @@ impl Tool for CronAddTool {
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job (shell or agent) with cron/at/every schedules"
+        "Create a scheduled cron job. Shell jobs are validated against the security policy \
+         (subshell operators like $() and backticks are blocked). \
+         Use job_type \"agent\" with a prompt for complex tasks."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -120,11 +122,14 @@ impl Tool for CronAddTool {
                     }
                 };
 
-                if !self.security.is_command_allowed(command) {
+                if let Some(reason) = self.security.command_block_reason(command) {
                     return Ok(ToolResult {
                         success: false,
                         output: String::new(),
-                        error: Some(format!("Command blocked by security policy: {command}")),
+                        error: Some(format!(
+                            "Command blocked by security policy: {reason}. Command: {command}. \
+                             Consider using job_type \"agent\" with a prompt instead."
+                        )),
                     });
                 }
 
