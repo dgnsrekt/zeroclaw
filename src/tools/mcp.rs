@@ -270,14 +270,19 @@ impl Tool for McpTool {
             Ok(Ok(result)) => {
                 let is_error = result.is_error.unwrap_or(false);
                 let text = Self::extract_text_from_content(&result.content);
+                let error = if is_error {
+                    Some(if text.is_empty() {
+                        format!("MCP tool '{}' returned an error", tool_name)
+                    } else {
+                        format!("MCP tool '{}' error: {}", tool_name, text)
+                    })
+                } else {
+                    None
+                };
                 Ok(ToolResult {
                     success: !is_error,
                     output: text,
-                    error: if is_error {
-                        Some(format!("MCP tool '{}' returned an error", tool_name))
-                    } else {
-                        None
-                    },
+                    error,
                 })
             }
             Ok(Err(e)) => Ok(ToolResult {
