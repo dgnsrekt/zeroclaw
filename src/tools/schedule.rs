@@ -27,7 +27,8 @@ impl Tool for ScheduleTool {
     }
 
     fn description(&self) -> &str {
-        "Manage scheduled tasks. Actions: create/add/once/list/get/cancel/remove/pause/resume"
+        "Manage scheduled shell command tasks (shell only — for agent jobs that use tools, \
+         use cron_add instead). Actions: create/add/once/list/get/cancel/remove/pause/resume"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

@@ -24,9 +24,12 @@ impl Tool for CronAddTool {
     }
 
     fn description(&self) -> &str {
-        "Create a scheduled cron job. Shell jobs are validated against the security policy \
-         (subshell operators like $() and backticks are blocked). \
-         Use job_type \"agent\" with a prompt for complex tasks."
+        "Create a scheduled cron job. \
+         Example agent job: {\"schedule\":{\"kind\":\"cron\",\"expr\":\"*/5 * * * *\"},\"job_type\":\"agent\",\"prompt\":\"your task\"}. \
+         Example shell job: {\"schedule\":{\"kind\":\"cron\",\"expr\":\"*/5 * * * *\"},\"command\":\"echo hello\"}. \
+         Shell jobs are validated against the security policy. \
+         Do NOT specify 'model' unless the user explicitly requests a specific model; \
+         omitting it uses the system's configured default model."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -36,13 +39,36 @@ impl Tool for CronAddTool {
                 "name": { "type": "string" },
                 "schedule": {
                     "type": "object",
-                    "description": "Schedule object: {kind:'cron',expr,tz?} | {kind:'at',at} | {kind:'every',every_ms}"
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["cron", "at", "every"],
+                            "description": "Schedule type (required)"
+                        },
+                        "expr": {
+                            "type": "string",
+                            "description": "Cron expression, e.g. '*/5 * * * *' (required when kind=cron)"
+                        },
+                        "tz": {
+                            "type": "string",
+                            "description": "IANA timezone, e.g. 'America/New_York' (optional, cron only)"
+                        },
+                        "at": {
+                            "type": "string",
+                            "description": "RFC3339 timestamp (required when kind=at)"
+                        },
+                        "every_ms": {
+                            "type": "integer",
+                            "description": "Interval in milliseconds (required when kind=every)"
+                        }
+                    },
+                    "required": ["kind"]
                 },
                 "job_type": { "type": "string", "enum": ["shell", "agent"] },
                 "command": { "type": "string" },
                 "prompt": { "type": "string" },
                 "session_target": { "type": "string", "enum": ["isolated", "main"] },
-                "model": { "type": "string" },
+                "model": { "type": "string", "description": "Optional model override for agent jobs. Omit to use the system default model. Only set if the user explicitly requests a specific model." },
                 "delivery": { "type": "object" },
                 "delete_after_run": { "type": "boolean" }
             },
