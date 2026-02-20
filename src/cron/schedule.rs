@@ -73,13 +73,71 @@ pub fn normalize_expression(expression: &str) -> Result<String> {
 
     match field_count {
         // standard crontab syntax: minute hour day month weekday
-        5 => Ok(format!("0 {expression}")),
-        // crate-native syntax includes seconds (+ optional year)
+        // The `cron` crate uses 1-based DOW (1=Sun..7=Sat) while standard
+        // crontab uses 0-based (0=Sun..6=Sat).  Shift the DOW field so that
+        // user-supplied crontab expressions behave as expected.
+        5 => {
+            let mut fields: Vec<&str> = expression.split_whitespace().collect();
+            let shifted_dow = shift_dow_field(fields[4])?;
+            fields[4] = &shifted_dow;
+            Ok(format!("0 {}", fields.join(" ")))
+        }
+        // crate-native syntax includes seconds (+ optional year) — pass through
         6 | 7 => Ok(expression.to_string()),
         _ => anyhow::bail!(
             "Invalid cron expression: {expression} (expected 5, 6, or 7 fields, got {field_count})"
         ),
     }
+}
+
+/// Shift a crontab DOW field from 0-based (0=Sun) to the `cron` crate's
+/// 1-based (1=Sun) numbering.  Handles `*`, single values, ranges, steps,
+/// and comma-separated lists.
+fn shift_dow_field(field: &str) -> Result<String> {
+    // Wildcards need no adjustment.
+    if field == "*" || field == "?" {
+        return Ok(field.to_string());
+    }
+
+    // Split on commas first to handle lists like "1,3,5".
+    let parts: Vec<&str> = field.split(',').collect();
+    let mut shifted_parts = Vec::with_capacity(parts.len());
+
+    for part in parts {
+        // Handle step suffix: "1-5/2" → base="1-5", step="/2"
+        let (base, step) = if let Some(idx) = part.find('/') {
+            (&part[..idx], &part[idx..])
+        } else {
+            (part, "")
+        };
+
+        let shifted_base = if base == "*" {
+            "*".to_string()
+        } else if let Some((lo, hi)) = base.split_once('-') {
+            let lo_n = shift_dow_value(lo)?;
+            let hi_n = shift_dow_value(hi)?;
+            format!("{lo_n}-{hi_n}")
+        } else {
+            let n = shift_dow_value(base)?;
+            n.to_string()
+        };
+
+        shifted_parts.push(format!("{shifted_base}{step}"));
+    }
+
+    Ok(shifted_parts.join(","))
+}
+
+fn shift_dow_value(val: &str) -> Result<u8> {
+    let n: u8 = val
+        .parse()
+        .with_context(|| format!("Invalid day-of-week value: {val}"))?;
+    if n > 7 {
+        anyhow::bail!("Day-of-week value out of range: {n}");
+    }
+    // Standard crontab: 0=Sun, 7=Sun.  Crate: 1=Sun, 7=Sat.
+    // 0 → 1, 1 → 2, ..., 6 → 7, 7 → 1
+    Ok(if n == 0 || n == 7 { 1 } else { n + 1 })
 }
 
 #[cfg(test)]
@@ -110,5 +168,55 @@ mod tests {
 
         let next = next_run_for_schedule(&schedule, from).unwrap();
         assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 16, 17, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn crontab_dow_1_5_means_mon_fri() {
+        // Feb 20 2026 is a FRIDAY.  Crontab "1-5" = Mon-Fri.
+        // Start from Thursday 23:59 UTC; next should be Friday.
+        let thursday_late = Utc.with_ymd_and_hms(2026, 2, 19, 23, 59, 0).unwrap();
+        let schedule = Schedule::Cron {
+            expr: "30 7 * * 1-5".into(),
+            tz: Some("America/Chicago".into()),
+        };
+        let next = next_run_for_schedule(&schedule, thursday_late).unwrap();
+        // Friday Feb 20 at 07:30 CST = 13:30 UTC
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 20, 13, 30, 0).unwrap());
+    }
+
+    #[test]
+    fn crontab_dow_0_is_sunday() {
+        // Crontab "0" = Sunday.  Feb 22 2026 is Sunday.
+        let saturday = Utc.with_ymd_and_hms(2026, 2, 21, 0, 0, 0).unwrap();
+        let schedule = Schedule::Cron {
+            expr: "0 12 * * 0".into(),
+            tz: None,
+        };
+        let next = next_run_for_schedule(&schedule, saturday).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 22, 12, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn crontab_dow_6_is_saturday() {
+        // Crontab "6" = Saturday.  Feb 21 2026 is Saturday.
+        let friday = Utc.with_ymd_and_hms(2026, 2, 20, 23, 0, 0).unwrap();
+        let schedule = Schedule::Cron {
+            expr: "0 9 * * 6".into(),
+            tz: None,
+        };
+        let next = next_run_for_schedule(&schedule, friday).unwrap();
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 2, 21, 9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn shift_dow_field_handles_lists_and_steps() {
+        assert_eq!(shift_dow_field("*").unwrap(), "*");
+        assert_eq!(shift_dow_field("0").unwrap(), "1");       // Sun
+        assert_eq!(shift_dow_field("5").unwrap(), "6");       // Fri
+        assert_eq!(shift_dow_field("1-5").unwrap(), "2-6");   // Mon-Fri
+        assert_eq!(shift_dow_field("0,6").unwrap(), "1,7");   // Sun,Sat
+        assert_eq!(shift_dow_field("*/2").unwrap(), "*/2");   // every 2nd day
+        assert_eq!(shift_dow_field("1-5/2").unwrap(), "2-6/2");
+        assert_eq!(shift_dow_field("7").unwrap(), "1");       // 7=Sun alias
     }
 }
