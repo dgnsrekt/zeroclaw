@@ -171,6 +171,18 @@ fn skip_env_assignments(s: &str) -> &str {
 ///
 /// We treat any standalone `&` as unsafe in policy validation because it can
 /// chain hidden sub-commands and escape foreground timeout expectations.
+
+/// Check if a command string contains `..` as a path component in any argument.
+/// Detects traversal patterns like `../`, `..`, or `/..` while ignoring the
+/// command name itself (first word).
+fn contains_path_traversal(command: &str) -> bool {
+    command.split_whitespace().skip(1).any(|arg| {
+        std::path::Path::new(arg)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    })
+}
+
 fn contains_single_ampersand(s: &str) -> bool {
     let bytes = s.as_bytes();
     for (i, b) in bytes.iter().enumerate() {
@@ -397,6 +409,17 @@ impl SecurityPolicy {
         if contains_single_ampersand(command) {
             return Some(
                 "command contains background operator (&); use && for chaining instead".into(),
+            );
+        }
+
+        // Block path traversal (`..`) in arguments when workspace_only is set.
+        // Shell commands run with CWD = workspace_dir, so `../` escapes the
+        // workspace even though the command name is allowed.
+        if self.workspace_only && contains_path_traversal(command) {
+            return Some(
+                "command contains path traversal (..) which is blocked when workspace_only is enabled; \
+                 use paths relative to the workspace directory instead"
+                    .into(),
             );
         }
 
@@ -1169,6 +1192,44 @@ mod tests {
         assert!(p.is_command_allowed("LANG=C grep pattern file"));
         // env assignment + disallowed command — blocked
         assert!(!p.is_command_allowed("FOO=bar rm -rf /"));
+    }
+
+    // ── Shell command path-traversal containment (workspace_only) ──
+
+    #[test]
+    fn shell_traversal_blocked_when_workspace_only() {
+        let p = default_policy(); // workspace_only = true
+        assert!(!p.is_command_allowed("git init ../../outside"));
+        assert!(!p.is_command_allowed("ls ../"));
+        assert!(!p.is_command_allowed("cat ../secret.txt"));
+        assert!(!p.is_command_allowed("echo hello && ls ../escape"));
+    }
+
+    #[test]
+    fn shell_traversal_allowed_when_not_workspace_only() {
+        let p = SecurityPolicy {
+            workspace_only: false,
+            allowed_commands: vec!["git".into(), "ls".into(), "cat".into()],
+            ..SecurityPolicy::default()
+        };
+        assert!(p.is_command_allowed("ls ../"));
+        assert!(p.is_command_allowed("cat ../secret.txt"));
+    }
+
+    #[test]
+    fn shell_traversal_allows_git_range_notation() {
+        let p = default_policy();
+        // git range notation (HEAD..main) contains ".." but not as a path component
+        assert!(p.is_command_allowed("git log HEAD..main"));
+        assert!(p.is_command_allowed("git diff HEAD~1..HEAD~2"));
+    }
+
+    #[test]
+    fn shell_traversal_allows_relative_paths() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("ls src/main.rs"));
+        assert!(p.is_command_allowed("git init my-app"));
+        assert!(p.is_command_allowed("cargo build"));
     }
 
     // ── Edge cases: path traversal ──────────────────────────
