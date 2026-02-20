@@ -82,6 +82,9 @@ parking_lot = "0.12"
 # Async traits
 async-trait = "0.1"
 
+# LIFX LAN protocol (smart light control)
+lifx-core = "0.2"
+
 # A2A (Agent-to-Agent) protocol client
 a2a-client = { version = "0.1", default-features = false }
 a2a-types = { version = "0.1", default-features = false }

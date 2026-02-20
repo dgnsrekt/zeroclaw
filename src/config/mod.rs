@@ -8,7 +8,7 @@ pub use schema::{
     BrowserConfig, ChannelsConfig, ClassificationRule, ComposioConfig, Config, CostConfig,
     CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, GatewayConfig,
     HardwareConfig, HardwareTransport, HeartbeatConfig, HttpRequestConfig, IMessageConfig,
-    IdentityConfig, LarkConfig, MatrixConfig, McpConfig, McpServerConfig, MemoryConfig,
+    IdentityConfig, LarkConfig, LifxConfig, MatrixConfig, McpConfig, McpServerConfig, MemoryConfig,
     ModelRouteConfig, NtfyConfig, NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig,
     PeripheralsConfig, ProxyConfig, ProxyScope, PushoverConfig, QueryClassificationConfig,
     RalphyConfig, ReliabilityConfig, ResourceLimitsConfig, RssFeedConfig, RssFeedEntry,

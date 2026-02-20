@@ -18,6 +18,7 @@ pub mod hardware_memory_map;
 pub mod hardware_memory_read;
 pub mod http_request;
 pub mod image_info;
+pub mod lifx;
 pub mod mcp;
 pub mod memory_forget;
 pub mod memory_recall;
@@ -55,6 +56,7 @@ pub use hardware_memory_map::HardwareMemoryMapTool;
 pub use hardware_memory_read::HardwareMemoryReadTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
+pub use lifx::LifxTool;
 pub use mcp::McpTool;
 pub use memory_forget::MemoryForgetTool;
 pub use memory_recall::MemoryRecallTool;
@@ -211,6 +213,13 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(RalphyTool::new(
             security.clone(),
             root_config.ralphy.clone(),
+        )));
+    }
+
+    if root_config.lifx.enabled {
+        tools.push(Box::new(LifxTool::new(
+            security.clone(),
+            root_config.lifx.clone(),
         )));
     }
 

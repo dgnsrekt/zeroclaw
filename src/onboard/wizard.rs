@@ -149,6 +149,7 @@ pub fn run_wizard() -> Result<Config> {
         rss_feed: crate::config::RssFeedConfig::default(),
         mcp: crate::config::McpConfig::default(),
         ralphy: crate::config::RalphyConfig::default(),
+        lifx: crate::config::LifxConfig::default(),
     };
 
     println!(
@@ -382,6 +383,7 @@ pub fn run_quick_setup(
         rss_feed: crate::config::RssFeedConfig::default(),
         mcp: crate::config::McpConfig::default(),
         ralphy: crate::config::RalphyConfig::default(),
+        lifx: crate::config::LifxConfig::default(),
     };
 
     config.save()?;

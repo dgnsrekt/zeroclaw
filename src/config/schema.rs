@@ -174,6 +174,10 @@ pub struct Config {
     /// Ralphy PRD executor configuration.
     #[serde(default)]
     pub ralphy: RalphyConfig,
+
+    /// LIFX LAN smart light control configuration.
+    #[serde(default)]
+    pub lifx: LifxConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -517,6 +521,38 @@ impl Default for RalphyConfig {
             enabled: false,
             timeout_secs: default_ralphy_timeout_secs(),
             command: default_ralphy_command(),
+        }
+    }
+}
+
+// ── LIFX LAN Smart Light Control ────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifxConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// UDP response timeout in seconds (default 3).
+    #[serde(default = "default_lifx_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Broadcast address for discovery (default "255.255.255.255").
+    #[serde(default = "default_lifx_broadcast_addr")]
+    pub broadcast_addr: String,
+}
+
+fn default_lifx_timeout_secs() -> u64 {
+    3
+}
+
+fn default_lifx_broadcast_addr() -> String {
+    "255.255.255.255".to_string()
+}
+
+impl Default for LifxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_lifx_timeout_secs(),
+            broadcast_addr: default_lifx_broadcast_addr(),
         }
     }
 }
@@ -2727,6 +2763,7 @@ impl Default for Config {
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
             ralphy: RalphyConfig::default(),
+            lifx: LifxConfig::default(),
         }
     }
 }
@@ -3574,6 +3611,7 @@ default_temperature = 0.7
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
             ralphy: RalphyConfig::default(),
+            lifx: LifxConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3721,6 +3759,7 @@ tool_dispatcher = "xml"
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
             ralphy: RalphyConfig::default(),
+            lifx: LifxConfig::default(),
         };
 
         config.save().unwrap();
