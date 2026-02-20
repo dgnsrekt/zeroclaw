@@ -4,12 +4,13 @@ use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use rmcp::model::{CallToolRequestParam, RawContent};
 use rmcp::service::RunningService;
-use rmcp::transport::TokioChildProcess;
 use rmcp::ServiceExt;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, warn};
 
@@ -17,6 +18,37 @@ type McpClient = RunningService<rmcp::RoleClient, ()>;
 
 struct McpClientHandle {
     client: McpClient,
+    _child: tokio::process::Child,
+    _filter_task: tokio::task::JoinHandle<()>,
+}
+
+/// Returns `true` if the line is a non-standard JSON-RPC notification that rmcp
+/// would attempt to skip (triggering a codec bug in rmcp <=0.8.5 where the
+/// response sitting in the buffer never gets processed).
+///
+/// Standard MCP notifications have methods like `notifications/...` or `$/...`.
+/// Non-standard ones (e.g. `codex/event`) are filtered out before reaching rmcp.
+fn is_non_standard_notification(line: &str) -> bool {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    let Some(method) = val.get("method").and_then(|m| m.as_str()) else {
+        return false;
+    };
+    // If it has an "id", it's a request, not a notification — keep it.
+    if val.get("id").is_some() {
+        return false;
+    }
+    // Standard MCP notification prefixes
+    if method.starts_with("notifications/") || method.starts_with("$/") {
+        return false;
+    }
+    // Standard MCP lifecycle methods
+    if matches!(method, "initialized" | "cancelled" | "progress") {
+        return false;
+    }
+    // Everything else is non-standard — filter it out.
+    true
 }
 
 pub struct McpTool {
@@ -105,22 +137,73 @@ impl McpTool {
             }
         }
 
-        // Spawn new process
-        let mut cmd = Command::new(&server.command);
-        cmd.args(&server.args);
+        // Spawn child process manually so we can filter its stdout before rmcp
+        // sees it. This works around an rmcp <=0.8.5 codec bug where
+        // non-standard notifications (e.g. codex/event) stall response parsing.
+        let mut child = Command::new(&server.command)
+            .args(&server.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to spawn MCP server '{}' (command: {} {}): {}",
+                    server.name,
+                    server.command,
+                    server.args.join(" "),
+                    e
+                )
+            })?;
 
-        let transport = TokioChildProcess::new(cmd).map_err(|e| {
-            format!(
-                "Failed to spawn MCP server '{}' (command: {} {}): {}",
-                server.name,
-                server.command,
-                server.args.join(" "),
-                e
-            )
-        })?;
+        let child_stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Failed to capture stdout for MCP server '{}'", server.name))?;
+        let child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("Failed to capture stdin for MCP server '{}'", server.name))?;
 
+        // Duplex pipe: filter task writes valid lines -> rmcp reads from it
+        let (mut filter_writer, filter_reader) = tokio::io::duplex(65536);
+
+        let server_name_log = server.name.clone();
+        let filter_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(child_stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break, // EOF — child closed stdout
+                    Ok(_) => {
+                        if is_non_standard_notification(&line) {
+                            debug!(
+                                server = %server_name_log,
+                                line = line.trim(),
+                                "Filtered non-standard MCP notification"
+                            );
+                            continue;
+                        }
+                        if filter_writer.write_all(line.as_bytes()).await.is_err() {
+                            break; // rmcp side dropped
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            server = %server_name_log,
+                            error = %e,
+                            "Error reading MCP server stdout"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+
+        // rmcp reads filtered stdout, writes directly to child stdin
         let startup_timeout = std::time::Duration::from_secs(server.startup_timeout_secs);
-        let client = tokio::time::timeout(startup_timeout, ().serve(transport))
+        let client = tokio::time::timeout(startup_timeout, ().serve((filter_reader, child_stdin)))
             .await
             .map_err(|_| {
                 format!(
@@ -130,7 +213,11 @@ impl McpTool {
             })?
             .map_err(|e| format!("MCP server '{}' initialization failed: {}", server.name, e))?;
 
-        let handle = Arc::new(tokio::sync::Mutex::new(McpClientHandle { client }));
+        let handle = Arc::new(tokio::sync::Mutex::new(McpClientHandle {
+            client,
+            _child: child,
+            _filter_task: filter_task,
+        }));
 
         // Insert into cache
         {
@@ -538,6 +625,43 @@ mod tests {
         let err = result.error.unwrap();
         assert!(err.contains("not in the allowed_tools list"));
         assert!(err.contains("codex"));
+    }
+
+    #[test]
+    fn filter_non_standard_notifications() {
+        // codex/event — non-standard, should be filtered
+        assert!(is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","method":"codex/event","params":{"type":"progress"}}"#
+        ));
+        // custom/anything — non-standard notification, should be filtered
+        assert!(is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","method":"custom/foo","params":{}}"#
+        ));
+
+        // Standard MCP notifications — should NOT be filtered
+        assert!(!is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","method":"notifications/progress","params":{}}"#
+        ));
+        assert!(!is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{}}"#
+        ));
+        assert!(!is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","method":"$/logTrace","params":{}}"#
+        ));
+
+        // JSON-RPC response (has id) — should NOT be filtered
+        assert!(!is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","id":3,"result":{"content":[]}}"#
+        ));
+
+        // JSON-RPC request (has id + method) — should NOT be filtered
+        assert!(!is_non_standard_notification(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codex/event","params":{}}"#
+        ));
+
+        // Malformed / non-JSON — should NOT be filtered (pass through to rmcp)
+        assert!(!is_non_standard_notification("not json at all"));
+        assert!(!is_non_standard_notification(""));
     }
 
     #[tokio::test]

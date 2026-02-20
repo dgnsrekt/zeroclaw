@@ -82,8 +82,8 @@ async-trait = "0.1"
 a2a-client = { version = "0.1", default-features = false }
 a2a-types = { version = "0.1", default-features = false }
 
-# MCP (Model Context Protocol) client — stdio child-process transport only
-rmcp = { version = "0.8", features = ["client", "transport-child-process"] }
+# MCP (Model Context Protocol) client — async read/write transport with custom filtered stdio
+rmcp = { version = "0.8", features = ["client", "transport-async-rw"] }
 
 # HMAC-SHA256 (Zhipu/GLM JWT auth)
 ring = "0.17"
