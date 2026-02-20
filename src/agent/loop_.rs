@@ -708,6 +708,14 @@ fn parse_glm_style_tool_calls(text: &str) -> Vec<(String, serde_json::Value, Opt
 ///
 /// Also supports JSON with `tool_calls` array from OpenAI-format responses.
 fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
+    // Normalize namespace-prefixed tool_call tags (e.g. <minimax:tool_call> -> <tool_call>).
+    // Some models emit vendor-prefixed XML tags that the standard parser doesn't recognize.
+    static NS_TOOL_CALL_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"<(/?)(?:[a-zA-Z][a-zA-Z0-9_-]*:)(tool[_-]?call|toolcall|invoke)>").unwrap()
+    });
+    let normalized = NS_TOOL_CALL_RE.replace_all(response, "<$1$2>");
+    let response = normalized.as_ref();
+
     let mut text_parts = Vec::new();
     let mut calls = Vec::new();
     let mut remaining = response;
@@ -3493,6 +3501,33 @@ Let me check the result."#;
     fn parse_xml_element_tool_calls_no_xml_elements() {
         let calls = parse_xml_element_tool_calls("just plain text");
         assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_tool_calls_namespace_prefixed_tool_call_tag() {
+        // MiniMax wraps tool calls in <minimax:tool_call> instead of <tool_call>
+        let response = r#"<minimax:tool_call>
+<invoke name="shell">
+<parameter name="command">curl -s "https://example.com/news"</parameter>
+</invoke>
+</minimax:tool_call>"#;
+        let (_text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1, "should parse namespace-prefixed tool_call tags");
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments.get("command").and_then(|v| v.as_str()),
+            Some(r#"curl -s "https://example.com/news""#)
+        );
+    }
+
+    #[test]
+    fn parse_tool_calls_namespace_prefixed_with_json() {
+        let response = r#"<minimax:tool_call>
+{"name": "web_search", "arguments": {"query": "stock market today"}}
+</minimax:tool_call>"#;
+        let (_text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_search");
     }
 
     // ─────────────────────────────────────────────────────────────────────
