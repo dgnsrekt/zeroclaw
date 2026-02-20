@@ -201,10 +201,47 @@ fn install_macos(config: &Config) -> Result<()> {
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
 
+    // Resolve HOME for the plist environment block.
+    let home_dir = directories::UserDirs::new()
+        .map(|u| u.home_dir().to_path_buf())
+        .context("Could not find home directory")?;
+    let home_str = home_dir.display().to_string();
+
+    // Build PATH: include cargo bin + standard system paths.
+    let cargo_bin = home_dir.join(".cargo").join("bin");
+    let path_str = format!(
+        "{}:/usr/local/bin:/usr/bin:/bin",
+        cargo_bin.display()
+    );
+
+    // Load .env file to inject provider URLs / API keys into the plist.
+    let env_file = config_dir.join(".env");
+    let mut env_entries = String::new();
+    if env_file.exists() {
+        if let Ok(contents) = fs::read_to_string(&env_file) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim();
+                    // Strip optional surrounding quotes from value.
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    env_entries.push_str(&format!(
+                        "    <key>{}</key>\n    <string>{}</string>\n",
+                        xml_escape(key),
+                        xml_escape(value)
+                    ));
+                }
+            }
+        }
+    }
+
     let plist = format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\">
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
   <key>Label</key>
   <string>{label}</string>
@@ -213,6 +250,13 @@ fn install_macos(config: &Config) -> Result<()> {
     <string>{exe}</string>
     <string>daemon</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>{home}</string>
+    <key>PATH</key>
+    <string>{path}</string>
+{env_entries}  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -228,6 +272,9 @@ fn install_macos(config: &Config) -> Result<()> {
 "#,
         label = SERVICE_LABEL,
         exe = xml_escape(&exe.display().to_string()),
+        home = xml_escape(&home_str),
+        path = xml_escape(&path_str),
+        env_entries = env_entries,
         working_dir = xml_escape(&config_dir.display().to_string()),
         stdout = xml_escape(&stdout.display().to_string()),
         stderr = xml_escape(&stderr.display().to_string())
@@ -235,6 +282,9 @@ fn install_macos(config: &Config) -> Result<()> {
 
     fs::write(&file, plist)?;
     println!("✅ Installed launchd service: {}", file.display());
+    if env_file.exists() {
+        println!("   Loaded env from: {}", env_file.display());
+    }
     println!("   Start with: zeroclaw service start");
     Ok(())
 }

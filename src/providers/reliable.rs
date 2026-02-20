@@ -159,7 +159,10 @@ fn failure_reason(rate_limited: bool, non_retryable: bool) -> &'static str {
 }
 
 fn compact_error_detail(err: &anyhow::Error) -> String {
-    super::sanitize_api_error(&err.to_string())
+    // Use the full error chain ({:#}) so underlying causes (connection refused,
+    // timeout, DNS failure, etc.) are visible instead of just the top-level
+    // reqwest message.
+    super::sanitize_api_error(&format!("{:#}", err))
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
