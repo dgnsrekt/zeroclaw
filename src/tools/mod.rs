@@ -25,6 +25,7 @@ pub mod memory_store;
 pub mod ntfy;
 pub mod proxy_config;
 pub mod pushover;
+pub mod ralphy_tool;
 pub mod rss_feed;
 pub mod schedule;
 pub mod schema;
@@ -61,6 +62,7 @@ pub use memory_store::MemoryStoreTool;
 pub use ntfy::NtfyTool;
 pub use proxy_config::ProxyConfigTool;
 pub use pushover::PushoverTool;
+pub use ralphy_tool::RalphyTool;
 pub use rss_feed::RssFeedTool;
 pub use schedule::ScheduleTool;
 #[allow(unused_imports)]
@@ -202,6 +204,13 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(McpTool::new(
             security.clone(),
             root_config.mcp.clone(),
+        )));
+    }
+
+    if root_config.ralphy.enabled {
+        tools.push(Box::new(RalphyTool::new(
+            security.clone(),
+            root_config.ralphy.clone(),
         )));
     }
 

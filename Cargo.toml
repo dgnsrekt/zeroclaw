@@ -31,12 +31,16 @@ matrix-sdk = { version = "0.16", default-features = false, features = ["e2e-encr
 # Serialization
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
+serde_yaml = "0.9"
 
 # Config
 directories = "6.0"
 toml = "1.0"
 shellexpand = "3.1"
 dotenvy = "0.15"
+
+# Temp files (ralphy PRD YAML)
+tempfile = "3.14"
 
 # Logging - minimal
 tracing = { version = "0.1", default-features = false }

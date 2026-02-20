@@ -148,6 +148,7 @@ pub fn run_wizard() -> Result<Config> {
         pushover: crate::config::PushoverConfig::default(),
         rss_feed: crate::config::RssFeedConfig::default(),
         mcp: crate::config::McpConfig::default(),
+        ralphy: crate::config::RalphyConfig::default(),
     };
 
     println!(
@@ -380,6 +381,7 @@ pub fn run_quick_setup(
         pushover: crate::config::PushoverConfig::default(),
         rss_feed: crate::config::RssFeedConfig::default(),
         mcp: crate::config::McpConfig::default(),
+        ralphy: crate::config::RalphyConfig::default(),
     };
 
     config.save()?;

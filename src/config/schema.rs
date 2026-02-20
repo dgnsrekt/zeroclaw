@@ -33,6 +33,7 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.http_request",
     "tool.a2a",
     "tool.mcp",
+    "tool.ralphy",
     "tool.ntfy",
     "tool.pushover",
     "tool.uptime_kuma",
@@ -169,6 +170,10 @@ pub struct Config {
     /// MCP (Model Context Protocol) client configuration.
     #[serde(default)]
     pub mcp: McpConfig,
+
+    /// Ralphy PRD executor configuration.
+    #[serde(default)]
+    pub ralphy: RalphyConfig,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -484,6 +489,39 @@ fn default_mcp_tool_timeout_secs() -> u64 {
 
 fn default_mcp_startup_timeout_secs() -> u64 {
     30
+}
+
+// ── Ralphy PRD Executor ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RalphyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory where ralphy executes tasks (the project root).
+    pub working_dir: Option<String>,
+    #[serde(default = "default_ralphy_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_ralphy_command")]
+    pub command: String,
+}
+
+fn default_ralphy_timeout_secs() -> u64 {
+    1800
+}
+
+fn default_ralphy_command() -> String {
+    "ralphy".to_string()
+}
+
+impl Default for RalphyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            working_dir: None,
+            timeout_secs: default_ralphy_timeout_secs(),
+            command: default_ralphy_command(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2691,6 +2729,7 @@ impl Default for Config {
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
+            ralphy: RalphyConfig::default(),
         }
     }
 }
@@ -3537,6 +3576,7 @@ default_temperature = 0.7
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
+            ralphy: RalphyConfig::default(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3683,6 +3723,7 @@ tool_dispatcher = "xml"
             pushover: PushoverConfig::default(),
             rss_feed: RssFeedConfig::default(),
             mcp: McpConfig::default(),
+            ralphy: RalphyConfig::default(),
         };
 
         config.save().unwrap();
