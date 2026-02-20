@@ -30,6 +30,10 @@ pub struct OpenAiCompatibleProvider {
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
     merge_system_into_user: bool,
+    /// When false, tool-use instructions are included in the system prompt
+    /// instead of using the API's native tool calling. Required for providers
+    /// that don't handle native function calling reliably (e.g. MiniMax).
+    native_tools: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -88,13 +92,18 @@ impl OpenAiCompatibleProvider {
 
     /// For providers that do not support `role: system` (e.g. MiniMax).
     /// System prompt content is prepended to the first user message instead.
+    /// Native tool calling is also disabled since these providers typically
+    /// don't handle it reliably.
     pub fn new_merge_system_into_user(
         name: &str,
         base_url: &str,
         credential: Option<&str>,
         auth_style: AuthStyle,
     ) -> Self {
-        Self::new_with_options(name, base_url, credential, auth_style, false, None, true)
+        let mut provider =
+            Self::new_with_options(name, base_url, credential, auth_style, false, None, true);
+        provider.native_tools = false;
+        provider
     }
 
     fn new_with_options(
@@ -114,6 +123,7 @@ impl OpenAiCompatibleProvider {
             supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
             merge_system_into_user,
+            native_tools: true,
         }
     }
 
@@ -1340,7 +1350,7 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn supports_native_tools(&self) -> bool {
-        true
+        self.native_tools
     }
 
     fn supports_streaming(&self) -> bool {
