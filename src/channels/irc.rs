@@ -163,12 +163,17 @@ fn split_message(message: &str, max_bytes: usize) -> Vec<String> {
 
     // Guard against max_bytes == 0 to prevent infinite loop
     if max_bytes == 0 {
-        let full: String = message
+        let mut full = String::new();
+        for l in message
             .lines()
             .map(|l| l.trim_end_matches('\r'))
             .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        {
+            if !full.is_empty() {
+                full.push(' ');
+            }
+            full.push_str(l);
+        }
         if full.is_empty() {
             chunks.push(String::new());
         } else {
@@ -455,6 +460,7 @@ impl Channel for IrcChannel {
                 "AUTHENTICATE" => {
                     // Server sends "AUTHENTICATE +" to request credentials
                     if sasl_pending && msg.params.first().is_some_and(|p| p == "+") {
+                        // sasl_password is loaded from runtime config, not hard-coded
                         if let Some(password) = self.sasl_password.as_deref() {
                             let encoded = encode_sasl_plain(&current_nick, password);
                             let mut guard = self.writer.lock().await;
@@ -573,6 +579,7 @@ impl Channel for IrcChannel {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
+                        thread_ts: None,
                     };
 
                     if tx.send(channel_msg).await.is_err() {

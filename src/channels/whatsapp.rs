@@ -8,6 +8,20 @@ use uuid::Uuid;
 /// Messages are received via the gateway's `/whatsapp` webhook endpoint.
 /// The `listen` method here is a no-op placeholder; actual message handling
 /// happens in the gateway when Meta sends webhook events.
+fn ensure_https(url: &str) -> anyhow::Result<()> {
+    if !url.starts_with("https://") {
+        anyhow::bail!(
+            "Refusing to transmit sensitive data over non-HTTPS URL: URL scheme must be https"
+        );
+    }
+    Ok(())
+}
+
+///
+/// # Runtime Negotiation
+///
+/// This Cloud API channel is automatically selected when `phone_number_id` is set in the config.
+/// Use `WhatsAppWebChannel` (with `session_path`) for native Web mode.
 pub struct WhatsAppChannel {
     access_token: String,
     endpoint_id: String,
@@ -85,7 +99,8 @@ impl WhatsAppChannel {
                     if !self.is_number_allowed(&normalized_from) {
                         tracing::warn!(
                             "WhatsApp: ignoring message from unauthorized number: {normalized_from}. \
-                            Add to allowed_numbers in config.toml, then run `zeroclaw onboard --channels-only`."
+                            Add to channels.whatsapp.allowed_numbers in config.toml, \
+                            or run `zeroclaw onboard --channels-only` to configure interactively."
                         );
                         continue;
                     }
@@ -126,6 +141,7 @@ impl WhatsAppChannel {
                         content,
                         channel: "whatsapp".to_string(),
                         timestamp,
+                        thread_ts: None,
                     });
                 }
             }
@@ -165,6 +181,8 @@ impl Channel for WhatsAppChannel {
             }
         });
 
+        ensure_https(&url)?;
+
         let resp = self
             .http_client()
             .post(&url)
@@ -202,6 +220,10 @@ impl Channel for WhatsAppChannel {
     async fn health_check(&self) -> bool {
         // Check if we can reach the WhatsApp API
         let url = format!("https://graph.facebook.com/v18.0/{}", self.endpoint_id);
+
+        if ensure_https(&url).is_err() {
+            return false;
+        }
 
         self.http_client()
             .get(&url)

@@ -9,6 +9,15 @@
 </p>
 
 <p align="center">
+  <a href="https://x.com/zeroclawlabs?s=21"><img src="https://img.shields.io/badge/X-%40zeroclawlabs-000000?style=flat&logo=x&logoColor=white" alt="X: @zeroclawlabs" /></a>
+  <a href="https://www.xiaohongshu.com/user/profile/67cbfc43000000000d008307?xsec_token=AB73VnYnGNx5y36EtnnZfGmAmS-6Wzv8WMuGpfwfkg6Yc%3D&xsec_source=pc_search"><img src="https://img.shields.io/badge/Xiaohongshu-Official-FF2442?style=flat" alt="Xiaohongshu: Official" /></a>
+  <a href="https://t.me/zeroclawlabs"><img src="https://img.shields.io/badge/Telegram-%40zeroclawlabs-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram: @zeroclawlabs" /></a>
+  <a href="https://t.me/zeroclawlabs_cn"><img src="https://img.shields.io/badge/Telegram%20CN-%40zeroclawlabs__cn-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram CN: @zeroclawlabs_cn" /></a>
+  <a href="https://t.me/zeroclawlabs_ru"><img src="https://img.shields.io/badge/Telegram%20RU-%40zeroclawlabs__ru-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram RU: @zeroclawlabs_ru" /></a>
+  <a href="https://www.reddit.com/r/zeroclawlabs/"><img src="https://img.shields.io/badge/Reddit-r%2Fzeroclawlabs-FF4500?style=flat&logo=reddit&logoColor=white" alt="Reddit: r/zeroclawlabs" /></a>
+</p>
+
+<p align="center">
   🌐 言語: <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a>
 </p>
 
@@ -33,7 +42,17 @@
 >
 > コマンド名、設定キー、API パス、Trait 名などの技術識別子は英語のまま維持しています。
 >
-> 最終同期日: **2026-02-18**。
+> 最終同期日: **2026-02-19**。
+
+## 📢 お知らせボード
+
+重要なお知らせ（互換性破壊変更、セキュリティ告知、メンテナンス時間、リリース阻害事項など）をここに掲載します。
+
+| 日付 (UTC) | レベル | お知らせ | 対応 |
+|---|---|---|---|
+| 2026-02-19 | _緊急_ | 私たちは `openagen/zeroclaw` および `zeroclaw.org` とは**一切関係ありません**。`zeroclaw.org` は現在 `openagen/zeroclaw` の fork を指しており、そのドメイン/リポジトリは当プロジェクトの公式サイト・公式プロジェクトを装っています。 | これらの情報源による案内、バイナリ、資金調達情報、公式発表は信頼しないでください。必ず本リポジトリと認証済み公式SNSのみを参照してください。 |
+| 2026-02-19 | _重要_ | 公式サイトは**まだ公開しておらず**、なりすましの試みを確認しています。ZeroClaw 名義の投資・資金調達などの活動には参加しないでください。 | 情報は本リポジトリを最優先で確認し、[X（@zeroclawlabs）](https://x.com/zeroclawlabs?s=21)、[Reddit（r/zeroclawlabs）](https://www.reddit.com/r/zeroclawlabs/)、[Telegram（@zeroclawlabs）](https://t.me/zeroclawlabs)、[Telegram CN（@zeroclawlabs_cn）](https://t.me/zeroclawlabs_cn)、[Telegram RU（@zeroclawlabs_ru）](https://t.me/zeroclawlabs_ru) と [小紅書アカウント](https://www.xiaohongshu.com/user/profile/67cbfc43000000000d008307?xsec_token=AB73VnYnGNx5y36EtnnZfGmAmS-6Wzv8WMuGpfwfkg6Yc%3D&xsec_source=pc_search) で公式更新を確認してください。 |
+| 2026-02-19 | _重要_ | Anthropic は 2026-02-19 に Authentication and Credential Use を更新しました。条文では、OAuth authentication（Free/Pro/Max）は Claude Code と Claude.ai 専用であり、Claude Free/Pro/Max で取得した OAuth トークンを他の製品・ツール・サービス（Agent SDK を含む）で使用することは許可されず、Consumer Terms of Service 違反に該当すると明記されています。 | 損失回避のため、当面は Claude Code OAuth 連携を試さないでください。原文: [Authentication and Credential Use](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)。 |
 
 ## 概要
 
@@ -100,6 +119,12 @@ cd zeroclaw
 
 ## クイックスタート
 
+### Homebrew（macOS/Linuxbrew）
+
+```bash
+brew install zeroclaw
+```
+
 ```bash
 git clone https://github.com/zeroclaw-labs/zeroclaw.git
 cd zeroclaw
@@ -115,6 +140,106 @@ zeroclaw agent -m "Hello, ZeroClaw!"
 zeroclaw gateway
 
 zeroclaw daemon
+```
+
+## Subscription Auth（OpenAI Codex / Claude Code）
+
+ZeroClaw はサブスクリプションベースのネイティブ認証プロファイルをサポートしています（マルチアカウント対応、保存時暗号化）。
+
+- 保存先: `~/.zeroclaw/auth-profiles.json`
+- 暗号化キー: `~/.zeroclaw/.secret_key`
+- Profile ID 形式: `<provider>:<profile_name>`（例: `openai-codex:work`）
+
+OpenAI Codex OAuth（ChatGPT サブスクリプション）:
+
+```bash
+# サーバー/ヘッドレス環境向け推奨
+zeroclaw auth login --provider openai-codex --device-code
+
+# ブラウザ/コールバックフロー（ペーストフォールバック付き）
+zeroclaw auth login --provider openai-codex --profile default
+zeroclaw auth paste-redirect --provider openai-codex --profile default
+
+# 確認 / リフレッシュ / プロファイル切替
+zeroclaw auth status
+zeroclaw auth refresh --provider openai-codex --profile default
+zeroclaw auth use --provider openai-codex --profile work
+```
+
+Claude Code / Anthropic setup-token:
+
+```bash
+# サブスクリプション/setup token の貼り付け（Authorization header モード）
+zeroclaw auth paste-token --provider anthropic --profile default --auth-kind authorization
+
+# エイリアスコマンド
+zeroclaw auth setup-token --provider anthropic --profile default
+```
+
+Subscription auth で agent を実行:
+
+```bash
+zeroclaw agent --provider openai-codex -m "hello"
+zeroclaw agent --provider openai-codex --auth-profile openai-codex:work -m "hello"
+
+# Anthropic は API key と auth token の両方の環境変数をサポート:
+# ANTHROPIC_AUTH_TOKEN, ANTHROPIC_OAUTH_TOKEN, ANTHROPIC_API_KEY
+zeroclaw agent --provider anthropic -m "hello"
+```
+
+## アーキテクチャ
+
+すべてのサブシステムは **Trait** — 設定変更だけで実装を差し替え可能、コード変更不要。
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="ZeroClaw アーキテクチャ" width="900" />
+</p>
+
+| サブシステム | Trait | 内蔵実装 | 拡張方法 |
+|-------------|-------|----------|----------|
+| **AI モデル** | `Provider` | `zeroclaw providers` で確認（現在 28 個の組み込み + エイリアス、カスタムエンドポイント対応） | `custom:https://your-api.com`（OpenAI 互換）または `anthropic-custom:https://your-api.com` |
+| **チャネル** | `Channel` | CLI, Telegram, Discord, Slack, Mattermost, iMessage, Matrix, Signal, WhatsApp, Email, IRC, Lark, DingTalk, QQ, Webhook | 任意のメッセージ API |
+| **メモリ** | `Memory` | SQLite ハイブリッド検索, PostgreSQL バックエンド, Lucid ブリッジ, Markdown ファイル, 明示的 `none` バックエンド, スナップショット/復元, オプション応答キャッシュ | 任意の永続化バックエンド |
+| **ツール** | `Tool` | shell/file/memory, cron/schedule, git, pushover, browser, http_request, screenshot/image_info, composio (opt-in), delegate, ハードウェアツール | 任意の機能 |
+| **オブザーバビリティ** | `Observer` | Noop, Log, Multi | Prometheus, OTel |
+| **ランタイム** | `RuntimeAdapter` | Native, Docker（サンドボックス） | adapter 経由で追加可能；未対応の kind は即座にエラー |
+| **セキュリティ** | `SecurityPolicy` | Gateway ペアリング, サンドボックス, allowlist, レート制限, ファイルシステムスコープ, 暗号化シークレット | — |
+| **アイデンティティ** | `IdentityConfig` | OpenClaw (markdown), AIEOS v1.1 (JSON) | 任意の ID フォーマット |
+| **トンネル** | `Tunnel` | None, Cloudflare, Tailscale, ngrok, Custom | 任意のトンネルバイナリ |
+| **ハートビート** | Engine | HEARTBEAT.md 定期タスク | — |
+| **スキル** | Loader | TOML マニフェスト + SKILL.md インストラクション | コミュニティスキルパック |
+| **インテグレーション** | Registry | 9 カテゴリ、70 件以上の連携 | プラグインシステム |
+
+### ランタイムサポート（現状）
+
+- ✅ 現在サポート: `runtime.kind = "native"` または `runtime.kind = "docker"`
+- 🚧 計画中（未実装）: WASM / エッジランタイム
+
+未対応の `runtime.kind` が設定された場合、ZeroClaw は native へのサイレントフォールバックではなく、明確なエラーで終了します。
+
+### メモリシステム（フルスタック検索エンジン）
+
+すべて自社実装、外部依存ゼロ — Pinecone、Elasticsearch、LangChain 不要:
+
+| レイヤー | 実装 |
+|---------|------|
+| **ベクトル DB** | Embeddings を SQLite に BLOB として保存、コサイン類似度検索 |
+| **キーワード検索** | FTS5 仮想テーブル、BM25 スコアリング |
+| **ハイブリッドマージ** | カスタム重み付きマージ関数（`vector.rs`） |
+| **Embeddings** | `EmbeddingProvider` trait — OpenAI、カスタム URL、または noop |
+| **チャンキング** | 行ベースの Markdown チャンカー（見出し構造保持） |
+| **キャッシュ** | SQLite `embedding_cache` テーブル、LRU エビクション |
+| **安全な再インデックス** | FTS5 再構築 + 欠落ベクトルの再埋め込みをアトミックに実行 |
+
+Agent はツール経由でメモリの呼び出し・保存・管理を自動的に行います。
+
+```toml
+[memory]
+backend = "sqlite"             # "sqlite", "lucid", "postgres", "markdown", "none"
+auto_save = true
+embedding_provider = "none"    # "none", "openai", "custom:https://..."
+vector_weight = 0.7
+keyword_weight = 0.3
 ```
 
 ## セキュリティのデフォルト

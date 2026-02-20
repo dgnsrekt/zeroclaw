@@ -6,16 +6,16 @@ pub use schema::{
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
     A2aAgentTarget, A2aConfig, AgentConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig,
     BrowserConfig, ChannelsConfig, ClassificationRule, ComposioConfig, Config, CostConfig,
-    CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, GatewayConfig,
-    HardwareConfig, HardwareTransport, HeartbeatConfig, HttpRequestConfig, IMessageConfig,
-    IdentityConfig, LarkConfig, LifxConfig, MatrixConfig, McpConfig, McpServerConfig, MemoryConfig,
-    ModelRouteConfig, NtfyConfig, NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig,
-    PeripheralsConfig, ProxyConfig, ProxyScope, PushoverConfig, QueryClassificationConfig,
-    RalphyConfig, ReliabilityConfig, ResourceLimitsConfig, RssFeedConfig, RssFeedEntry,
-    RuntimeConfig, SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig,
-    SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
-    TelegramConfig, TunnelConfig, UptimeKumaConfig, UptimeKumaTarget, WebSearchConfig,
-    WebhookConfig,
+    CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, EmbeddingRouteConfig,
+    GatewayConfig, HardwareConfig, HardwareTransport, HeartbeatConfig, HttpRequestConfig,
+    IMessageConfig, IdentityConfig, LarkConfig, LifxConfig, MatrixConfig, McpConfig,
+    McpServerConfig, MemoryConfig, ModelRouteConfig, MultimodalConfig, NtfyConfig,
+    NtfyTargetConfig, ObservabilityConfig, PeripheralBoardConfig, PeripheralsConfig, ProxyConfig,
+    ProxyScope, PushoverConfig, QueryClassificationConfig, RalphyConfig, ReliabilityConfig,
+    ResourceLimitsConfig, RssFeedConfig, RssFeedEntry, RuntimeConfig, SandboxBackend,
+    SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig, SkillsConfig, SlackConfig,
+    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig,
+    TunnelConfig, UptimeKumaConfig, UptimeKumaTarget, WebSearchConfig, WebhookConfig,
 };
 
 #[cfg(test)]
@@ -38,6 +38,7 @@ mod tests {
             allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
+            interrupt_on_new_message: false,
             mention_only: false,
         };
 

@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde_json::json;
+use std::collections::HashMap;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
@@ -13,7 +14,7 @@ pub struct DiscordChannel {
     allowed_users: Vec<String>,
     listen_to_bots: bool,
     mention_only: bool,
-    typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    typing_handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 impl DiscordChannel {
@@ -30,7 +31,7 @@ impl DiscordChannel {
             allowed_users,
             listen_to_bots,
             mention_only,
-            typing_handle: Mutex::new(None),
+            typing_handles: Mutex::new(HashMap::new()),
         }
     }
 
@@ -272,7 +273,9 @@ impl Channel for DiscordChannel {
                 }
             }
         });
-        write.send(Message::Text(identify.to_string())).await?;
+        write
+            .send(Message::Text(identify.to_string().into()))
+            .await?;
 
         tracing::info!("Discord: connected and identified");
 
@@ -301,7 +304,7 @@ impl Channel for DiscordChannel {
                 _ = hb_rx.recv() => {
                     let d = if sequence >= 0 { json!(sequence) } else { json!(null) };
                     let hb = json!({"op": 1, "d": d});
-                    if write.send(Message::Text(hb.to_string())).await.is_err() {
+                    if write.send(Message::Text(hb.to_string().into())).await.is_err() {
                         break;
                     }
                 }
@@ -312,7 +315,7 @@ impl Channel for DiscordChannel {
                         _ => continue,
                     };
 
-                    let event: serde_json::Value = match serde_json::from_str(&msg) {
+                    let event: serde_json::Value = match serde_json::from_str(msg.as_ref()) {
                         Ok(e) => e,
                         Err(_) => continue,
                     };
@@ -329,7 +332,7 @@ impl Channel for DiscordChannel {
                         1 => {
                             let d = if sequence >= 0 { json!(sequence) } else { json!(null) };
                             let hb = json!({"op": 1, "d": d});
-                            if write.send(Message::Text(hb.to_string())).await.is_err() {
+                            if write.send(Message::Text(hb.to_string().into())).await.is_err() {
                                 break;
                             }
                             continue;
@@ -413,6 +416,7 @@ impl Channel for DiscordChannel {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs(),
+                        thread_ts: None,
                     };
 
                     if tx.send(channel_msg).await.is_err() {
@@ -454,15 +458,15 @@ impl Channel for DiscordChannel {
             }
         });
 
-        let mut guard = self.typing_handle.lock();
-        *guard = Some(handle);
+        let mut guard = self.typing_handles.lock();
+        guard.insert(recipient.to_string(), handle);
 
         Ok(())
     }
 
-    async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
-        let mut guard = self.typing_handle.lock();
-        if let Some(handle) = guard.take() {
+    async fn stop_typing(&self, recipient: &str) -> anyhow::Result<()> {
+        let mut guard = self.typing_handles.lock();
+        if let Some(handle) = guard.remove(recipient) {
             handle.abort();
         }
         Ok(())
@@ -751,18 +755,18 @@ mod tests {
     }
 
     #[test]
-    fn typing_handle_starts_as_none() {
+    fn typing_handles_start_empty() {
         let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
-        let guard = ch.typing_handle.lock();
-        assert!(guard.is_none());
+        let guard = ch.typing_handles.lock();
+        assert!(guard.is_empty());
     }
 
     #[tokio::test]
     async fn start_typing_sets_handle() {
         let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
         let _ = ch.start_typing("123456").await;
-        let guard = ch.typing_handle.lock();
-        assert!(guard.is_some());
+        let guard = ch.typing_handles.lock();
+        assert!(guard.contains_key("123456"));
     }
 
     #[tokio::test]
@@ -770,8 +774,8 @@ mod tests {
         let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
         let _ = ch.start_typing("123456").await;
         let _ = ch.stop_typing("123456").await;
-        let guard = ch.typing_handle.lock();
-        assert!(guard.is_none());
+        let guard = ch.typing_handles.lock();
+        assert!(!guard.contains_key("123456"));
     }
 
     #[tokio::test]
@@ -782,12 +786,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_typing_replaces_existing_task() {
+    async fn concurrent_typing_handles_are_independent() {
         let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
         let _ = ch.start_typing("111").await;
         let _ = ch.start_typing("222").await;
-        let guard = ch.typing_handle.lock();
-        assert!(guard.is_some());
+        {
+            let guard = ch.typing_handles.lock();
+            assert_eq!(guard.len(), 2);
+            assert!(guard.contains_key("111"));
+            assert!(guard.contains_key("222"));
+        }
+        // Stopping one does not affect the other
+        let _ = ch.stop_typing("111").await;
+        let guard = ch.typing_handles.lock();
+        assert_eq!(guard.len(), 1);
+        assert!(guard.contains_key("222"));
     }
 
     // ── Message ID edge cases ─────────────────────────────────────
@@ -839,5 +852,114 @@ mod tests {
         assert!(id.starts_with("discord_"));
         // Should have UUID dashes
         assert!(id.contains('-'));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // TG6: Channel platform limit edge cases for Discord (2000 char limit)
+    // Prevents: Pattern 6 — issues #574, #499
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn split_message_code_block_at_boundary() {
+        // Code block that spans the split boundary
+        let mut msg = String::new();
+        msg.push_str("```rust\n");
+        msg.push_str(&"x".repeat(1990));
+        msg.push_str("\n```\nMore text after code block");
+        let parts = split_message_for_discord(&msg);
+        assert!(
+            parts.len() >= 2,
+            "code block spanning boundary should split"
+        );
+        for part in &parts {
+            assert!(
+                part.len() <= DISCORD_MAX_MESSAGE_LENGTH,
+                "each part must be <= {DISCORD_MAX_MESSAGE_LENGTH}, got {}",
+                part.len()
+            );
+        }
+    }
+
+    #[test]
+    fn split_message_single_long_word_exceeds_limit() {
+        // A single word longer than 2000 chars must be hard-split
+        let long_word = "a".repeat(2500);
+        let parts = split_message_for_discord(&long_word);
+        assert!(parts.len() >= 2, "word exceeding limit must be split");
+        for part in &parts {
+            assert!(
+                part.len() <= DISCORD_MAX_MESSAGE_LENGTH,
+                "hard-split part must be <= {DISCORD_MAX_MESSAGE_LENGTH}, got {}",
+                part.len()
+            );
+        }
+        // Reassembled content should match original
+        let reassembled: String = parts.join("");
+        assert_eq!(reassembled, long_word);
+    }
+
+    #[test]
+    fn split_message_exactly_at_limit_no_split() {
+        let msg = "a".repeat(DISCORD_MAX_MESSAGE_LENGTH);
+        let parts = split_message_for_discord(&msg);
+        assert_eq!(parts.len(), 1, "message exactly at limit should not split");
+        assert_eq!(parts[0].len(), DISCORD_MAX_MESSAGE_LENGTH);
+    }
+
+    #[test]
+    fn split_message_one_over_limit_splits() {
+        let msg = "a".repeat(DISCORD_MAX_MESSAGE_LENGTH + 1);
+        let parts = split_message_for_discord(&msg);
+        assert!(parts.len() >= 2, "message 1 char over limit must split");
+    }
+
+    #[test]
+    fn split_message_many_short_lines() {
+        // Many short lines should be batched into chunks under the limit
+        let msg: String = (0..500).map(|i| format!("line {i}\n")).collect();
+        let parts = split_message_for_discord(&msg);
+        for part in &parts {
+            assert!(
+                part.len() <= DISCORD_MAX_MESSAGE_LENGTH,
+                "short-line batch must be <= limit"
+            );
+        }
+        // All content should be preserved
+        let reassembled: String = parts.join("");
+        assert_eq!(reassembled.trim(), msg.trim());
+    }
+
+    #[test]
+    fn split_message_only_whitespace() {
+        let msg = "   \n\n\t  ";
+        let parts = split_message_for_discord(msg);
+        // Should handle gracefully without panic
+        assert!(parts.len() <= 1);
+    }
+
+    #[test]
+    fn split_message_emoji_at_boundary() {
+        // Emoji are multi-byte; ensure we don't split mid-emoji
+        let mut msg = "a".repeat(1998);
+        msg.push_str("🎉🎊"); // 2 emoji at the boundary (2000 chars total)
+        let parts = split_message_for_discord(&msg);
+        for part in &parts {
+            // The function splits on character count, not byte count
+            assert!(
+                part.chars().count() <= DISCORD_MAX_MESSAGE_LENGTH,
+                "emoji boundary split must respect limit"
+            );
+        }
+    }
+
+    #[test]
+    fn split_message_consecutive_newlines_at_boundary() {
+        let mut msg = "a".repeat(1995);
+        msg.push_str("\n\n\n\n\n");
+        msg.push_str(&"b".repeat(100));
+        let parts = split_message_for_discord(&msg);
+        for part in &parts {
+            assert!(part.len() <= DISCORD_MAX_MESSAGE_LENGTH);
+        }
     }
 }

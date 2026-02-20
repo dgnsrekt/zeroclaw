@@ -1,10 +1,11 @@
 use parking_lot::Mutex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// How much autonomy the agent has
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AutonomyLevel {
     /// Read-only: can observe but not act
@@ -111,6 +112,7 @@ impl Default for SecurityPolicy {
                 "wc".into(),
                 "head".into(),
                 "tail".into(),
+                "date".into(),
             ],
             forbidden_paths: vec![
                 // System directories (blocked even when workspace_only=false)
@@ -144,6 +146,12 @@ impl Default for SecurityPolicy {
     }
 }
 
+// ── Shell Command Parsing Utilities ───────────────────────────────────────
+// These helpers implement a minimal quote-aware shell lexer. They exist
+// because security validation must reason about the *structure* of a
+// command (separators, operators, quoting) rather than treating it as a
+// flat string — otherwise an attacker could hide dangerous sub-commands
+// inside quoted arguments or chained operators.
 /// Skip leading environment variable assignments (e.g. `FOO=bar cmd args`).
 /// Returns the remainder starting at the first non-assignment word.
 fn skip_env_assignments(s: &str) -> &str {
@@ -167,10 +175,110 @@ fn skip_env_assignments(s: &str) -> &str {
     }
 }
 
-/// Detect a single `&` operator (background/chain). `&&` is allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuoteState {
+    None,
+    Single,
+    Double,
+}
+
+/// Split a shell command into sub-commands by unquoted separators.
 ///
-/// We treat any standalone `&` as unsafe in policy validation because it can
-/// chain hidden sub-commands and escape foreground timeout expectations.
+/// Separators:
+/// - `;` and newline
+/// - `|`
+/// - `&&`, `||`
+///
+/// Characters inside single or double quotes are treated as literals, so
+/// `sqlite3 db "SELECT 1; SELECT 2;"` remains a single segment.
+fn split_unquoted_segments(command: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = QuoteState::None;
+    let mut escaped = false;
+    let mut chars = command.chars().peekable();
+
+    let push_segment = |segments: &mut Vec<String>, current: &mut String| {
+        let trimmed = current.trim();
+        if !trimmed.is_empty() {
+            segments.push(trimmed.to_string());
+        }
+        current.clear();
+    };
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            QuoteState::Single => {
+                if ch == '\'' {
+                    quote = QuoteState::None;
+                }
+                current.push(ch);
+            }
+            QuoteState::Double => {
+                if escaped {
+                    escaped = false;
+                    current.push(ch);
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    current.push(ch);
+                    continue;
+                }
+                if ch == '"' {
+                    quote = QuoteState::None;
+                }
+                current.push(ch);
+            }
+            QuoteState::None => {
+                if escaped {
+                    escaped = false;
+                    current.push(ch);
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    current.push(ch);
+                    continue;
+                }
+
+                match ch {
+                    '\'' => {
+                        quote = QuoteState::Single;
+                        current.push(ch);
+                    }
+                    '"' => {
+                        quote = QuoteState::Double;
+                        current.push(ch);
+                    }
+                    ';' | '\n' => push_segment(&mut segments, &mut current),
+                    '|' => {
+                        if chars.next_if_eq(&'|').is_some() {
+                            // Consume full `||`; both characters are separators.
+                        }
+                        push_segment(&mut segments, &mut current);
+                    }
+                    '&' => {
+                        if chars.next_if_eq(&'&').is_some() {
+                            // `&&` is a separator; single `&` is handled separately.
+                            push_segment(&mut segments, &mut current);
+                        } else {
+                            current.push(ch);
+                        }
+                    }
+                    _ => current.push(ch),
+                }
+            }
+        }
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        segments.push(trimmed.to_string());
+    }
+
+    segments
+}
 
 /// Check if a command string contains `..` as a path component in any argument.
 /// Detects traversal patterns like `../`, `..`, or `/..` while ignoring the
@@ -183,41 +291,121 @@ fn contains_path_traversal(command: &str) -> bool {
     })
 }
 
-fn contains_single_ampersand(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        if *b != b'&' {
-            continue;
-        }
-        let prev_is_amp = i > 0 && bytes[i - 1] == b'&';
-        let next_is_amp = i + 1 < bytes.len() && bytes[i + 1] == b'&';
-        if !prev_is_amp && !next_is_amp {
-            return true;
+/// Detect a single unquoted `&` operator (background/chain). `&&` is allowed.
+///
+/// We treat any standalone `&` as unsafe in policy validation because it can
+/// chain hidden sub-commands and escape foreground timeout expectations.
+fn contains_unquoted_single_ampersand(command: &str) -> bool {
+    let mut quote = QuoteState::None;
+    let mut escaped = false;
+    let mut chars = command.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            QuoteState::Single => {
+                if ch == '\'' {
+                    quote = QuoteState::None;
+                }
+            }
+            QuoteState::Double => {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == '"' {
+                    quote = QuoteState::None;
+                }
+            }
+            QuoteState::None => {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                match ch {
+                    '\'' => quote = QuoteState::Single,
+                    '"' => quote = QuoteState::Double,
+                    '&' => {
+                        if chars.next_if_eq(&'&').is_none() {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
+
+    false
+}
+
+/// Detect an unquoted character in a shell command.
+fn contains_unquoted_char(command: &str, target: char) -> bool {
+    let mut quote = QuoteState::None;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        match quote {
+            QuoteState::Single => {
+                if ch == '\'' {
+                    quote = QuoteState::None;
+                }
+            }
+            QuoteState::Double => {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == '"' {
+                    quote = QuoteState::None;
+                    continue;
+                }
+            }
+            QuoteState::None => {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                match ch {
+                    '\'' => quote = QuoteState::Single,
+                    '"' => quote = QuoteState::Double,
+                    _ if ch == target => return true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
     false
 }
 
 impl SecurityPolicy {
+    // ── Risk Classification ──────────────────────────────────────────────
+    // Risk is assessed per-segment (split on shell operators), and the
+    // highest risk across all segments wins. This prevents bypasses like
+    // `ls && rm -rf /` from being classified as Low just because `ls` is safe.
+
     /// Classify command risk. Any high-risk segment marks the whole command high.
     pub fn command_risk_level(&self, command: &str) -> CommandRiskLevel {
-        let mut normalized = command.to_string();
-        for sep in ["&&", "||"] {
-            normalized = normalized.replace(sep, "\x00");
-        }
-        for sep in ['\n', ';', '|', '&'] {
-            normalized = normalized.replace(sep, "\x00");
-        }
-
         let mut saw_medium = false;
 
-        for segment in normalized.split('\x00') {
-            let segment = segment.trim();
-            if segment.is_empty() {
-                continue;
-            }
-
-            let cmd_part = skip_env_assignments(segment);
+        for segment in split_unquoted_segments(command) {
+            let cmd_part = skip_env_assignments(&segment);
             let mut words = cmd_part.split_whitespace();
             let Some(base_raw) = words.next() else {
                 continue;
@@ -319,6 +507,15 @@ impl SecurityPolicy {
         }
     }
 
+    // ── Command Execution Policy Gate ──────────────────────────────────────
+    // Validation follows a strict precedence order:
+    //   1. Allowlist check (is the base command permitted at all?)
+    //   2. Risk classification (high / medium / low)
+    //   3. Policy flags (block_high_risk_commands, require_approval_for_medium_risk)
+    //   4. Autonomy level × approval status (supervised requires explicit approval)
+    // This ordering ensures deny-by-default: unknown commands are rejected
+    // before any risk or autonomy logic runs.
+
     /// Validate full command execution policy (allowlist + risk gate).
     pub fn validate_command_execution(
         &self,
@@ -356,6 +553,11 @@ impl SecurityPolicy {
         Ok(risk)
     }
 
+    // ── Layered Command Allowlist ──────────────────────────────────────────
+    // Defence-in-depth: five independent gates run in order before the
+    // per-segment allowlist check. Each gate targets a specific bypass
+    // technique. If any gate rejects, the whole command is blocked.
+
     /// Return the reason a shell command would be blocked, or `None` if allowed.
     ///
     /// Validates the **entire** command string, not just the first word:
@@ -385,8 +587,9 @@ impl SecurityPolicy {
             );
         }
 
-        // Block output redirections — they can write to arbitrary paths
-        if command.contains('>') {
+        // Block output redirections (`>`, `>>`) — they can write to arbitrary paths.
+        // Ignore quoted literals, e.g. `echo "a>b"`.
+        if contains_unquoted_char(command, '>') {
             return Some(
                 "command contains output redirection (>) which is blocked for security".into(),
             );
@@ -406,7 +609,7 @@ impl SecurityPolicy {
 
         // Block background command chaining (`&`), which can hide extra
         // sub-commands and outlive timeout expectations. Keep `&&` allowed.
-        if contains_single_ampersand(command) {
+        if contains_unquoted_single_ampersand(command) {
             return Some(
                 "command contains background operator (&); use && for chaining instead".into(),
             );
@@ -423,22 +626,9 @@ impl SecurityPolicy {
             );
         }
 
-        // Split on command separators and validate each sub-command.
-        // We collect segments by scanning for separator characters.
-        let mut normalized = command.to_string();
-        for sep in ["&&", "||"] {
-            normalized = normalized.replace(sep, "\x00");
-        }
-        for sep in ['\n', ';', '|'] {
-            normalized = normalized.replace(sep, "\x00");
-        }
-
-        for segment in normalized.split('\x00') {
-            let segment = segment.trim();
-            if segment.is_empty() {
-                continue;
-            }
-
+        // Split on unquoted command separators and validate each sub-command.
+        let segments = split_unquoted_segments(command);
+        for segment in &segments {
             // Strip leading env var assignments (e.g. FOO=bar cmd)
             let cmd_part = skip_env_assignments(segment);
 
@@ -473,7 +663,7 @@ impl SecurityPolicy {
         }
 
         // At least one command must be present
-        let has_cmd = normalized.split('\x00').any(|s| {
+        let has_cmd = segments.iter().any(|s| {
             let s = skip_env_assignments(s.trim());
             s.split_whitespace().next().is_some_and(|w| !w.is_empty())
         });
@@ -515,6 +705,12 @@ impl SecurityPolicy {
             _ => true,
         }
     }
+
+    // ── Path Validation ────────────────────────────────────────────────
+    // Layered checks: null-byte injection → component-level traversal →
+    // URL-encoded traversal → tilde expansion → absolute-path block →
+    // forbidden-prefix match. Each layer addresses a distinct escape
+    // technique; together they enforce workspace confinement.
 
     /// Check if a file path is allowed (no path traversal, within workspace)
     pub fn is_path_allowed(&self, path: &str) -> bool {
@@ -591,6 +787,11 @@ impl SecurityPolicy {
     pub fn can_act(&self) -> bool {
         self.autonomy != AutonomyLevel::ReadOnly
     }
+
+    // ── Tool Operation Gating ──────────────────────────────────────────────
+    // Read operations bypass autonomy and rate checks because they have
+    // no side effects. Act operations must pass both the autonomy gate
+    // (not read-only) and the sliding-window rate limiter.
 
     /// Enforce policy for a tool operation.
     ///
@@ -750,6 +951,7 @@ mod tests {
         assert!(p.is_command_allowed("cargo build --release"));
         assert!(p.is_command_allowed("cat file.txt"));
         assert!(p.is_command_allowed("grep -r pattern ."));
+        assert!(p.is_command_allowed("date"));
     }
 
     #[test]
@@ -888,6 +1090,19 @@ mod tests {
         let result = p.validate_command_execution("rm -rf /tmp/test", true);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("high-risk"));
+    }
+
+    #[test]
+    fn validate_command_full_mode_skips_medium_risk_approval_gate() {
+        let p = SecurityPolicy {
+            autonomy: AutonomyLevel::Full,
+            require_approval_for_medium_risk: true,
+            allowed_commands: vec!["touch".into()],
+            ..SecurityPolicy::default()
+        };
+
+        let result = p.validate_command_execution("touch test.txt", false);
+        assert_eq!(result.unwrap(), CommandRiskLevel::Medium);
     }
 
     #[test]
@@ -1086,6 +1301,32 @@ mod tests {
     }
 
     #[test]
+    fn quoted_semicolons_do_not_split_sqlite_command() {
+        let p = SecurityPolicy {
+            allowed_commands: vec!["sqlite3".into()],
+            ..SecurityPolicy::default()
+        };
+        assert!(p.is_command_allowed(
+            "sqlite3 /tmp/test.db \"CREATE TABLE t(id INT); INSERT INTO t VALUES(1); SELECT * FROM t;\""
+        ));
+        assert_eq!(
+            p.command_risk_level(
+                "sqlite3 /tmp/test.db \"CREATE TABLE t(id INT); INSERT INTO t VALUES(1); SELECT * FROM t;\""
+            ),
+            CommandRiskLevel::Low
+        );
+    }
+
+    #[test]
+    fn unquoted_semicolon_after_quoted_sql_still_splits_commands() {
+        let p = SecurityPolicy {
+            allowed_commands: vec!["sqlite3".into()],
+            ..SecurityPolicy::default()
+        };
+        assert!(!p.is_command_allowed("sqlite3 /tmp/test.db \"SELECT 1;\"; rm -rf /"));
+    }
+
+    #[test]
     fn command_injection_backtick_blocked() {
         let p = default_policy();
         assert!(!p.is_command_allowed("echo `whoami`"));
@@ -1145,6 +1386,13 @@ mod tests {
         let p = default_policy();
         assert!(!p.is_command_allowed("echo secret > /etc/crontab"));
         assert!(!p.is_command_allowed("ls >> /tmp/exfil.txt"));
+    }
+
+    #[test]
+    fn quoted_ampersand_and_redirect_literals_are_not_treated_as_operators() {
+        let p = default_policy();
+        assert!(p.is_command_allowed("echo \"A&B\""));
+        assert!(p.is_command_allowed("echo \"A>B\""));
     }
 
     #[test]

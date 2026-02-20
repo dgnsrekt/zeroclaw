@@ -9,6 +9,15 @@
 </p>
 
 <p align="center">
+  <a href="https://x.com/zeroclawlabs?s=21"><img src="https://img.shields.io/badge/X-%40zeroclawlabs-000000?style=flat&logo=x&logoColor=white" alt="X: @zeroclawlabs" /></a>
+  <a href="https://www.xiaohongshu.com/user/profile/67cbfc43000000000d008307?xsec_token=AB73VnYnGNx5y36EtnnZfGmAmS-6Wzv8WMuGpfwfkg6Yc%3D&xsec_source=pc_search"><img src="https://img.shields.io/badge/Xiaohongshu-Official-FF2442?style=flat" alt="Xiaohongshu: Official" /></a>
+  <a href="https://t.me/zeroclawlabs"><img src="https://img.shields.io/badge/Telegram-%40zeroclawlabs-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram: @zeroclawlabs" /></a>
+  <a href="https://t.me/zeroclawlabs_cn"><img src="https://img.shields.io/badge/Telegram%20CN-%40zeroclawlabs__cn-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram CN: @zeroclawlabs_cn" /></a>
+  <a href="https://t.me/zeroclawlabs_ru"><img src="https://img.shields.io/badge/Telegram%20RU-%40zeroclawlabs__ru-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram RU: @zeroclawlabs_ru" /></a>
+  <a href="https://www.reddit.com/r/zeroclawlabs/"><img src="https://img.shields.io/badge/Reddit-r%2Fzeroclawlabs-FF4500?style=flat&logo=reddit&logoColor=white" alt="Reddit: r/zeroclawlabs" /></a>
+</p>
+
+<p align="center">
   🌐 语言：<a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a>
 </p>
 
@@ -33,7 +42,17 @@
 > 
 > 技术标识（命令、配置键、API 路径、Trait 名称）保持英文，避免语义漂移。
 > 
-> 最后对齐时间：**2026-02-18**。
+> 最后对齐时间：**2026-02-19**。
+
+## 📢 公告板
+
+用于发布重要通知（破坏性变更、安全通告、维护窗口、版本阻塞问题等）。
+
+| 日期（UTC） | 级别 | 通知 | 处理建议 |
+|---|---|---|---|
+| 2026-02-19 | _紧急_ | 我们与 `openagen/zeroclaw` 及 `zeroclaw.org` **没有任何关系**。`zeroclaw.org` 当前会指向 `openagen/zeroclaw` 这个 fork，并且该域名/仓库正在冒充我们的官网与官方项目。 | 请不要相信上述来源发布的任何信息、二进制、募资活动或官方声明。请仅以本仓库和已验证官方社媒为准。 |
+| 2026-02-19 | _重要_ | 我们目前**尚未发布官方正式网站**，且已发现有人尝试冒充我们。请勿参与任何打着 ZeroClaw 名义进行的投资、募资或类似活动。 | 一切信息请以本仓库为准；也可关注 [X（@zeroclawlabs）](https://x.com/zeroclawlabs?s=21)、[Reddit（r/zeroclawlabs）](https://www.reddit.com/r/zeroclawlabs/)、[Telegram（@zeroclawlabs）](https://t.me/zeroclawlabs)、[Telegram 中文频道（@zeroclawlabs_cn）](https://t.me/zeroclawlabs_cn)、[Telegram 俄语频道（@zeroclawlabs_ru）](https://t.me/zeroclawlabs_ru) 与 [小红书账号](https://www.xiaohongshu.com/user/profile/67cbfc43000000000d008307?xsec_token=AB73VnYnGNx5y36EtnnZfGmAmS-6Wzv8WMuGpfwfkg6Yc%3D&xsec_source=pc_search) 获取官方最新动态。 |
+| 2026-02-19 | _重要_ | Anthropic 于 2026-02-19 更新了 Authentication and Credential Use 条款。条款明确：OAuth authentication（用于 Free、Pro、Max）仅适用于 Claude Code 与 Claude.ai；将 Claude Free/Pro/Max 账号获得的 OAuth token 用于其他任何产品、工具或服务（包括 Agent SDK）不被允许，并可能构成对 Consumer Terms of Service 的违规。 | 为避免损失，请暂时不要尝试 Claude Code OAuth 集成；原文见：[Authentication and Credential Use](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)。 |
 
 ## 项目简介
 
@@ -100,6 +119,12 @@ cd zeroclaw
 
 ## 快速开始
 
+### Homebrew（macOS/Linuxbrew）
+
+```bash
+brew install zeroclaw
+```
+
 ```bash
 git clone https://github.com/zeroclaw-labs/zeroclaw.git
 cd zeroclaw
@@ -120,6 +145,106 @@ zeroclaw gateway
 
 # 启动长期运行模式
 zeroclaw daemon
+```
+
+## Subscription Auth（OpenAI Codex / Claude Code）
+
+ZeroClaw 现已支持基于订阅的原生鉴权配置（多账号、静态加密存储）。
+
+- 配置文件：`~/.zeroclaw/auth-profiles.json`
+- 加密密钥：`~/.zeroclaw/.secret_key`
+- Profile ID 格式：`<provider>:<profile_name>`（例：`openai-codex:work`）
+
+OpenAI Codex OAuth（ChatGPT 订阅）：
+
+```bash
+# 推荐用于服务器/无显示器环境
+zeroclaw auth login --provider openai-codex --device-code
+
+# 浏览器/回调流程，支持粘贴回退
+zeroclaw auth login --provider openai-codex --profile default
+zeroclaw auth paste-redirect --provider openai-codex --profile default
+
+# 检查 / 刷新 / 切换 profile
+zeroclaw auth status
+zeroclaw auth refresh --provider openai-codex --profile default
+zeroclaw auth use --provider openai-codex --profile work
+```
+
+Claude Code / Anthropic setup-token：
+
+```bash
+# 粘贴订阅/setup token（Authorization header 模式）
+zeroclaw auth paste-token --provider anthropic --profile default --auth-kind authorization
+
+# 别名命令
+zeroclaw auth setup-token --provider anthropic --profile default
+```
+
+使用 subscription auth 运行 agent：
+
+```bash
+zeroclaw agent --provider openai-codex -m "hello"
+zeroclaw agent --provider openai-codex --auth-profile openai-codex:work -m "hello"
+
+# Anthropic 同时支持 API key 和 auth token 环境变量：
+# ANTHROPIC_AUTH_TOKEN, ANTHROPIC_OAUTH_TOKEN, ANTHROPIC_API_KEY
+zeroclaw agent --provider anthropic -m "hello"
+```
+
+## 架构
+
+每个子系统都是一个 **Trait** — 通过配置切换即可更换实现，无需修改代码。
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="ZeroClaw 架构图" width="900" />
+</p>
+
+| 子系统 | Trait | 内置实现 | 扩展方式 |
+|--------|-------|----------|----------|
+| **AI 模型** | `Provider` | 通过 `zeroclaw providers` 查看（当前 28 个内置 + 别名，以及自定义端点） | `custom:https://your-api.com`（OpenAI 兼容）或 `anthropic-custom:https://your-api.com` |
+| **通道** | `Channel` | CLI, Telegram, Discord, Slack, Mattermost, iMessage, Matrix, Signal, WhatsApp, Email, IRC, Lark, DingTalk, QQ, Webhook | 任意消息 API |
+| **记忆** | `Memory` | SQLite 混合搜索, PostgreSQL 后端, Lucid 桥接, Markdown 文件, 显式 `none` 后端, 快照/恢复, 可选响应缓存 | 任意持久化后端 |
+| **工具** | `Tool` | shell/file/memory, cron/schedule, git, pushover, browser, http_request, screenshot/image_info, composio (opt-in), delegate, 硬件工具 | 任意能力 |
+| **可观测性** | `Observer` | Noop, Log, Multi | Prometheus, OTel |
+| **运行时** | `RuntimeAdapter` | Native, Docker（沙箱） | 通过 adapter 添加；不支持的类型会快速失败 |
+| **安全** | `SecurityPolicy` | Gateway 配对, 沙箱, allowlist, 速率限制, 文件系统作用域, 加密密钥 | — |
+| **身份** | `IdentityConfig` | OpenClaw (markdown), AIEOS v1.1 (JSON) | 任意身份格式 |
+| **隧道** | `Tunnel` | None, Cloudflare, Tailscale, ngrok, Custom | 任意隧道工具 |
+| **心跳** | Engine | HEARTBEAT.md 定期任务 | — |
+| **技能** | Loader | TOML 清单 + SKILL.md 指令 | 社区技能包 |
+| **集成** | Registry | 9 个分类下 70+ 集成 | 插件系统 |
+
+### 运行时支持（当前）
+
+- ✅ 当前支持：`runtime.kind = "native"` 或 `runtime.kind = "docker"`
+- 🚧 计划中，尚未实现：WASM / 边缘运行时
+
+配置了不支持的 `runtime.kind` 时，ZeroClaw 会以明确的错误退出，而非静默回退到 native。
+
+### 记忆系统（全栈搜索引擎）
+
+全部自研，零外部依赖 — 无需 Pinecone、Elasticsearch、LangChain：
+
+| 层级 | 实现 |
+|------|------|
+| **向量数据库** | Embeddings 以 BLOB 存储于 SQLite，余弦相似度搜索 |
+| **关键词搜索** | FTS5 虚拟表，BM25 评分 |
+| **混合合并** | 自定义加权合并函数（`vector.rs`） |
+| **Embeddings** | `EmbeddingProvider` trait — OpenAI、自定义 URL 或 noop |
+| **分块** | 基于行的 Markdown 分块器，保留标题结构 |
+| **缓存** | SQLite `embedding_cache` 表，LRU 淘汰策略 |
+| **安全重索引** | 原子化重建 FTS5 + 重新嵌入缺失向量 |
+
+Agent 通过工具自动进行记忆的回忆、保存和管理。
+
+```toml
+[memory]
+backend = "sqlite"             # "sqlite", "lucid", "postgres", "markdown", "none"
+auto_save = true
+embedding_provider = "none"    # "none", "openai", "custom:https://..."
+vector_weight = 0.7
+keyword_weight = 0.3
 ```
 
 ## 安全默认行为（关键）

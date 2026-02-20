@@ -26,6 +26,10 @@ pub struct OpenAiCompatibleProvider {
     /// GLM/Zhipu does not support the responses API.
     supports_responses_fallback: bool,
     user_agent: Option<String>,
+    /// When true, collect all `system` messages and prepend their content
+    /// to the first `user` message, then drop the system messages.
+    /// Required for providers that reject `role: system` (e.g. MiniMax).
+    merge_system_into_user: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -46,7 +50,7 @@ impl OpenAiCompatibleProvider {
         credential: Option<&str>,
         auth_style: AuthStyle,
     ) -> Self {
-        Self::new_with_options(name, base_url, credential, auth_style, true, None)
+        Self::new_with_options(name, base_url, credential, auth_style, true, None, false)
     }
 
     /// Same as `new` but skips the /v1/responses fallback on 404.
@@ -57,7 +61,7 @@ impl OpenAiCompatibleProvider {
         credential: Option<&str>,
         auth_style: AuthStyle,
     ) -> Self {
-        Self::new_with_options(name, base_url, credential, auth_style, false, None)
+        Self::new_with_options(name, base_url, credential, auth_style, false, None, false)
     }
 
     /// Create a provider with a custom User-Agent header.
@@ -78,7 +82,19 @@ impl OpenAiCompatibleProvider {
             auth_style,
             true,
             Some(user_agent),
+            false,
         )
+    }
+
+    /// For providers that do not support `role: system` (e.g. MiniMax).
+    /// System prompt content is prepended to the first user message instead.
+    pub fn new_merge_system_into_user(
+        name: &str,
+        base_url: &str,
+        credential: Option<&str>,
+        auth_style: AuthStyle,
+    ) -> Self {
+        Self::new_with_options(name, base_url, credential, auth_style, false, None, true)
     }
 
     fn new_with_options(
@@ -88,6 +104,7 @@ impl OpenAiCompatibleProvider {
         auth_style: AuthStyle,
         supports_responses_fallback: bool,
         user_agent: Option<&str>,
+        merge_system_into_user: bool,
     ) -> Self {
         Self {
             name: name.to_string(),
@@ -96,7 +113,39 @@ impl OpenAiCompatibleProvider {
             auth_header: auth_style,
             supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
+            merge_system_into_user,
         }
+    }
+
+    /// Collect all `system` role messages, concatenate their content,
+    /// and prepend to the first `user` message. Drop all system messages.
+    /// Used for providers (e.g. MiniMax) that reject `role: system`.
+    fn flatten_system_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+        let system_content: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        if system_content.is_empty() {
+            return messages.to_vec();
+        }
+
+        let mut result: Vec<ChatMessage> = messages
+            .iter()
+            .filter(|m| m.role != "system")
+            .cloned()
+            .collect();
+
+        if let Some(first_user) = result.iter_mut().find(|m| m.role == "user") {
+            first_user.content = format!("{system_content}\n\n{}", first_user.content);
+        } else {
+            // No user message found: insert a synthetic user message with system content
+            result.insert(0, ChatMessage::user(&system_content));
+        }
+
+        result
     }
 
     fn http_client(&self) -> Client {
@@ -230,6 +279,30 @@ struct Choice {
     message: ResponseMessage,
 }
 
+/// Remove `<think>...</think>` blocks from model output.
+/// Some reasoning models (e.g. MiniMax) embed their chain-of-thought inline
+/// in the `content` field rather than a separate `reasoning_content` field.
+/// The resulting `<think>` tags must be stripped before returning to the user.
+fn strip_think_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    loop {
+        if let Some(start) = rest.find("<think>") {
+            result.push_str(&rest[..start]);
+            if let Some(end) = rest[start..].find("</think>") {
+                rest = &rest[start + end + "</think>".len()..];
+            } else {
+                // Unclosed tag: drop the rest to avoid leaking partial reasoning.
+                break;
+            }
+        } else {
+            result.push_str(rest);
+            break;
+        }
+    }
+    result.trim().to_string()
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct ResponseMessage {
     #[serde(default)]
@@ -246,18 +319,35 @@ impl ResponseMessage {
     /// Extract text content, falling back to `reasoning_content` when `content`
     /// is missing or empty. Reasoning/thinking models (Qwen3, GLM-4, etc.)
     /// often return their output solely in `reasoning_content`.
+    /// Strips `<think>...</think>` blocks that some models (e.g. MiniMax) embed
+    /// inline in `content` instead of using a separate field.
     fn effective_content(&self) -> String {
-        match &self.content {
-            Some(c) if !c.is_empty() => c.clone(),
-            _ => self.reasoning_content.clone().unwrap_or_default(),
+        if let Some(content) = self.content.as_ref().filter(|c| !c.is_empty()) {
+            let stripped = strip_think_tags(content);
+            if !stripped.is_empty() {
+                return stripped;
+            }
         }
+
+        self.reasoning_content
+            .as_ref()
+            .map(|c| strip_think_tags(c))
+            .filter(|c| !c.is_empty())
+            .unwrap_or_default()
     }
 
     fn effective_content_optional(&self) -> Option<String> {
-        match &self.content {
-            Some(c) if !c.is_empty() => Some(c.clone()),
-            _ => self.reasoning_content.clone().filter(|c| !c.is_empty()),
+        if let Some(content) = self.content.as_ref().filter(|c| !c.is_empty()) {
+            let stripped = strip_think_tags(content);
+            if !stripped.is_empty() {
+                return Some(stripped);
+            }
         }
+
+        self.reasoning_content
+            .as_ref()
+            .map(|c| strip_think_tags(c))
+            .filter(|c| !c.is_empty())
     }
 }
 
@@ -495,6 +585,43 @@ fn first_nonempty(text: Option<&str>) -> Option<String> {
     })
 }
 
+fn normalize_responses_role(role: &str) -> &'static str {
+    match role {
+        "assistant" => "assistant",
+        "tool" => "assistant",
+        _ => "user",
+    }
+}
+
+fn build_responses_prompt(messages: &[ChatMessage]) -> (Option<String>, Vec<ResponsesInput>) {
+    let mut instructions_parts = Vec::new();
+    let mut input = Vec::new();
+
+    for message in messages {
+        if message.content.trim().is_empty() {
+            continue;
+        }
+
+        if message.role == "system" {
+            instructions_parts.push(message.content.clone());
+            continue;
+        }
+
+        input.push(ResponsesInput {
+            role: normalize_responses_role(&message.role).to_string(),
+            content: message.content.clone(),
+        });
+    }
+
+    let instructions = if instructions_parts.is_empty() {
+        None
+    } else {
+        Some(instructions_parts.join("\n\n"))
+    };
+
+    (instructions, input)
+}
+
 fn extract_responses_text(response: ResponsesResponse) -> Option<String> {
     if let Some(text) = first_nonempty(response.output_text.as_deref()) {
         return Some(text);
@@ -565,17 +692,21 @@ impl OpenAiCompatibleProvider {
     async fn chat_via_responses(
         &self,
         credential: &str,
-        system_prompt: Option<&str>,
-        message: &str,
+        messages: &[ChatMessage],
         model: &str,
     ) -> anyhow::Result<String> {
+        let (instructions, input) = build_responses_prompt(messages);
+        if input.is_empty() {
+            anyhow::bail!(
+                "{} Responses API fallback requires at least one non-system message",
+                self.name
+            );
+        }
+
         let request = ResponsesRequest {
             model: model.to_string(),
-            input: vec![ResponsesInput {
-                role: "user".to_string(),
-                content: message.to_string(),
-            }],
-            instructions: system_prompt.map(str::to_string),
+            input,
+            instructions,
             stream: Some(false),
         };
 
@@ -765,6 +896,7 @@ impl Provider for OpenAiCompatibleProvider {
     fn capabilities(&self) -> crate::providers::traits::ProviderCapabilities {
         crate::providers::traits::ProviderCapabilities {
             native_tool_calling: true,
+            vision: false,
         }
     }
 
@@ -784,17 +916,27 @@ impl Provider for OpenAiCompatibleProvider {
 
         let mut messages = Vec::new();
 
-        if let Some(sys) = system_prompt {
+        if self.merge_system_into_user {
+            let content = match system_prompt {
+                Some(sys) => format!("{sys}\n\n{message}"),
+                None => message.to_string(),
+            };
             messages.push(Message {
-                role: "system".to_string(),
-                content: sys.to_string(),
+                role: "user".to_string(),
+                content,
+            });
+        } else {
+            if let Some(sys) = system_prompt {
+                messages.push(Message {
+                    role: "system".to_string(),
+                    content: sys.to_string(),
+                });
+            }
+            messages.push(Message {
+                role: "user".to_string(),
+                content: message.to_string(),
             });
         }
-
-        messages.push(Message {
-            role: "user".to_string(),
-            content: message.to_string(),
-        });
 
         let request = ApiChatRequest {
             model: model.to_string(),
@@ -807,10 +949,40 @@ impl Provider for OpenAiCompatibleProvider {
 
         let url = self.chat_completions_url();
 
-        let response = self
+        let mut fallback_messages = Vec::new();
+        if let Some(system_prompt) = system_prompt {
+            fallback_messages.push(ChatMessage::system(system_prompt));
+        }
+        fallback_messages.push(ChatMessage::user(message));
+        let fallback_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(&fallback_messages)
+        } else {
+            fallback_messages
+        };
+
+        let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(chat_error) => {
+                if self.supports_responses_fallback {
+                    let sanitized = super::sanitize_api_error(&chat_error.to_string());
+                    return self
+                        .chat_via_responses(credential, &fallback_messages, model)
+                        .await
+                        .map_err(|responses_err| {
+                            anyhow::anyhow!(
+                                "{} chat completions transport error: {sanitized} (responses fallback failed: {responses_err})",
+                                self.name
+                            )
+                        });
+                }
+
+                return Err(chat_error.into());
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -819,7 +991,7 @@ impl Provider for OpenAiCompatibleProvider {
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
-                    .chat_via_responses(credential, system_prompt, message, model)
+                    .chat_via_responses(credential, &fallback_messages, model)
                     .await
                     .map_err(|responses_err| {
                         anyhow::anyhow!(
@@ -871,7 +1043,12 @@ impl Provider for OpenAiCompatibleProvider {
             )
         })?;
 
-        let api_messages: Vec<Message> = messages
+        let effective_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(messages)
+        } else {
+            messages.to_vec()
+        };
+        let api_messages: Vec<Message> = effective_messages
             .iter()
             .map(|m| Message {
                 role: m.role.clone(),
@@ -889,35 +1066,44 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let response = self
+        let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(chat_error) => {
+                if self.supports_responses_fallback {
+                    let sanitized = super::sanitize_api_error(&chat_error.to_string());
+                    return self
+                        .chat_via_responses(credential, &effective_messages, model)
+                        .await
+                        .map_err(|responses_err| {
+                            anyhow::anyhow!(
+                                "{} chat completions transport error: {sanitized} (responses fallback failed: {responses_err})",
+                                self.name
+                            )
+                        });
+                }
+
+                return Err(chat_error.into());
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
 
             // Mirror chat_with_system: 404 may mean this provider uses the Responses API
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                // Extract system prompt and last user message for responses fallback
-                let system = messages.iter().find(|m| m.role == "system");
-                let last_user = messages.iter().rfind(|m| m.role == "user");
-                if let Some(user_msg) = last_user {
-                    return self
-                        .chat_via_responses(
-                            credential,
-                            system.map(|m| m.content.as_str()),
-                            &user_msg.content,
-                            model,
+                return self
+                    .chat_via_responses(credential, &effective_messages, model)
+                    .await
+                    .map_err(|responses_err| {
+                        anyhow::anyhow!(
+                            "{} API error (chat completions unavailable; responses fallback failed: {responses_err})",
+                            self.name
                         )
-                        .await
-                        .map_err(|responses_err| {
-                            anyhow::anyhow!(
-                                "{} API error (chat completions unavailable; responses fallback failed: {responses_err})",
-                                self.name
-                            )
-                        });
-                }
+                    });
             }
 
             return Err(super::api_error(&self.name, response).await);
@@ -963,7 +1149,12 @@ impl Provider for OpenAiCompatibleProvider {
             )
         })?;
 
-        let api_messages: Vec<Message> = messages
+        let effective_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(messages)
+        } else {
+            messages.to_vec()
+        };
+        let api_messages: Vec<Message> = effective_messages
             .iter()
             .map(|m| Message {
                 role: m.role.clone(),
@@ -989,10 +1180,24 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let response = self
+        let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(
+                    "{} native tool call transport failed: {error}; falling back to history path",
+                    self.name
+                );
+                let text = self.chat_with_history(messages, model, temperature).await?;
+                return Ok(ProviderChatResponse {
+                    text: Some(text),
+                    tool_calls: vec![],
+                });
+            }
+        };
 
         if !response.status().is_success() {
             return Err(super::api_error(&self.name, response).await);
@@ -1041,9 +1246,14 @@ impl Provider for OpenAiCompatibleProvider {
         })?;
 
         let tools = Self::convert_tool_specs(request.tools);
+        let effective_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(request.messages)
+        } else {
+            request.messages.to_vec()
+        };
         let native_request = NativeChatRequest {
             model: model.to_string(),
-            messages: Self::convert_messages_for_native(request.messages),
+            messages: Self::convert_messages_for_native(&effective_messages),
             temperature,
             stream: Some(false),
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
@@ -1051,13 +1261,36 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let response = self
+        let response = match self
             .apply_auth_header(
                 self.http_client().post(&url).json(&native_request),
                 credential,
             )
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(chat_error) => {
+                if self.supports_responses_fallback {
+                    let sanitized = super::sanitize_api_error(&chat_error.to_string());
+                    return self
+                        .chat_via_responses(credential, &effective_messages, model)
+                        .await
+                        .map(|text| ProviderChatResponse {
+                            text: Some(text),
+                            tool_calls: vec![],
+                        })
+                        .map_err(|responses_err| {
+                            anyhow::anyhow!(
+                                "{} native chat transport error: {sanitized} (responses fallback failed: {responses_err})",
+                                self.name
+                            )
+                        });
+                }
+
+                return Err(chat_error.into());
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -1077,28 +1310,19 @@ impl Provider for OpenAiCompatibleProvider {
             }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                let system = request.messages.iter().find(|m| m.role == "system");
-                let last_user = request.messages.iter().rfind(|m| m.role == "user");
-                if let Some(user_msg) = last_user {
-                    return self
-                        .chat_via_responses(
-                            credential,
-                            system.map(|m| m.content.as_str()),
-                            &user_msg.content,
-                            model,
+                return self
+                    .chat_via_responses(credential, &effective_messages, model)
+                    .await
+                    .map(|text| ProviderChatResponse {
+                        text: Some(text),
+                        tool_calls: vec![],
+                    })
+                    .map_err(|responses_err| {
+                        anyhow::anyhow!(
+                            "{} API error ({status}): {sanitized} (chat completions unavailable; responses fallback failed: {responses_err})",
+                            self.name
                         )
-                        .await
-                        .map(|text| ProviderChatResponse {
-                            text: Some(text),
-                            tool_calls: vec![],
-                        })
-                        .map_err(|responses_err| {
-                            anyhow::anyhow!(
-                                "{} API error ({status}): {sanitized} (chat completions unavailable; responses fallback failed: {responses_err})",
-                                self.name
-                            )
-                        });
-                }
+                    });
             }
 
             anyhow::bail!("{} API error ({status}): {sanitized}", self.name);
@@ -1433,6 +1657,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn build_responses_prompt_preserves_multi_turn_history() {
+        let messages = vec![
+            ChatMessage::system("policy"),
+            ChatMessage::user("step 1"),
+            ChatMessage::assistant("ack 1"),
+            ChatMessage::tool("{\"result\":\"ok\"}"),
+            ChatMessage::user("step 2"),
+        ];
+
+        let (instructions, input) = build_responses_prompt(&messages);
+
+        assert_eq!(instructions.as_deref(), Some("policy"));
+        assert_eq!(input.len(), 4);
+        assert_eq!(input[0].role, "user");
+        assert_eq!(input[0].content, "step 1");
+        assert_eq!(input[1].role, "assistant");
+        assert_eq!(input[1].content, "ack 1");
+        assert_eq!(input[2].role, "assistant");
+        assert_eq!(input[2].content, "{\"result\":\"ok\"}");
+        assert_eq!(input[3].role, "user");
+        assert_eq!(input[3].content, "step 2");
+    }
+
+    #[tokio::test]
+    async fn chat_via_responses_requires_non_system_message() {
+        let provider = make_provider("custom", "https://api.example.com", Some("test-key"));
+        let err = provider
+            .chat_via_responses("test-key", &[ChatMessage::system("policy")], "gpt-test")
+            .await
+            .expect_err("system-only fallback payload should fail");
+
+        assert!(err
+            .to_string()
+            .contains("requires at least one non-system message"));
+    }
+
     // ----------------------------------------------------------
     // Custom endpoint path tests (Issue #114)
     // ----------------------------------------------------------
@@ -1659,6 +1920,48 @@ mod tests {
     }
 
     #[test]
+    fn flatten_system_messages_merges_into_first_user() {
+        let input = vec![
+            ChatMessage::system("core policy"),
+            ChatMessage::assistant("ack"),
+            ChatMessage::system("delivery rules"),
+            ChatMessage::user("hello"),
+            ChatMessage::assistant("post-user"),
+        ];
+
+        let output = OpenAiCompatibleProvider::flatten_system_messages(&input);
+        assert_eq!(output.len(), 3);
+        assert_eq!(output[0].role, "assistant");
+        assert_eq!(output[0].content, "ack");
+        assert_eq!(output[1].role, "user");
+        assert_eq!(output[1].content, "core policy\n\ndelivery rules\n\nhello");
+        assert_eq!(output[2].role, "assistant");
+        assert_eq!(output[2].content, "post-user");
+        assert!(output.iter().all(|m| m.role != "system"));
+    }
+
+    #[test]
+    fn flatten_system_messages_inserts_user_when_missing() {
+        let input = vec![
+            ChatMessage::system("core policy"),
+            ChatMessage::assistant("ack"),
+        ];
+
+        let output = OpenAiCompatibleProvider::flatten_system_messages(&input);
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].role, "user");
+        assert_eq!(output[0].content, "core policy");
+        assert_eq!(output[1].role, "assistant");
+        assert_eq!(output[1].content, "ack");
+    }
+
+    #[test]
+    fn strip_think_tags_drops_unclosed_block_suffix() {
+        let input = "visible<think>hidden";
+        assert_eq!(strip_think_tags(input), "visible");
+    }
+
+    #[test]
     fn native_tool_schema_unsupported_detection_is_precise() {
         assert!(OpenAiCompatibleProvider::is_native_tool_schema_unsupported(
             reqwest::StatusCode::BAD_REQUEST,
@@ -1877,6 +2180,56 @@ mod tests {
         assert!(msg.tool_calls.is_none());
     }
 
+    #[test]
+    fn flatten_system_messages_merges_into_first_user_and_removes_system_roles() {
+        let messages = vec![
+            ChatMessage::system("System A"),
+            ChatMessage::assistant("Earlier assistant turn"),
+            ChatMessage::system("System B"),
+            ChatMessage::user("User turn"),
+            ChatMessage::tool(r#"{"ok":true}"#),
+        ];
+
+        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages);
+        assert_eq!(flattened.len(), 3);
+        assert_eq!(flattened[0].role, "assistant");
+        assert_eq!(
+            flattened[1].content,
+            "System A\n\nSystem B\n\nUser turn".to_string()
+        );
+        assert_eq!(flattened[1].role, "user");
+        assert_eq!(flattened[2].role, "tool");
+        assert!(!flattened.iter().any(|m| m.role == "system"));
+    }
+
+    #[test]
+    fn flatten_system_messages_inserts_synthetic_user_when_no_user_exists() {
+        let messages = vec![
+            ChatMessage::assistant("Assistant only"),
+            ChatMessage::system("Synthetic system"),
+        ];
+
+        let flattened = OpenAiCompatibleProvider::flatten_system_messages(&messages);
+        assert_eq!(flattened.len(), 2);
+        assert_eq!(flattened[0].role, "user");
+        assert_eq!(flattened[0].content, "Synthetic system");
+        assert_eq!(flattened[1].role, "assistant");
+    }
+
+    #[test]
+    fn strip_think_tags_removes_multiple_blocks_with_surrounding_text() {
+        let input = "Answer A <think>hidden 1</think> and B <think>hidden 2</think> done";
+        let output = strip_think_tags(input);
+        assert_eq!(output, "Answer A  and B  done");
+    }
+
+    #[test]
+    fn strip_think_tags_drops_tail_for_unclosed_block() {
+        let input = "Visible<think>hidden tail";
+        let output = strip_think_tags(input);
+        assert_eq!(output, "Visible");
+    }
+
     // ----------------------------------------------------------
     // Reasoning model fallback tests (reasoning_content)
     // ----------------------------------------------------------
@@ -1916,6 +2269,18 @@ mod tests {
         let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
         let msg = &resp.choices[0].message;
         assert_eq!(msg.effective_content(), "Normal response");
+    }
+
+    #[test]
+    fn reasoning_content_used_when_content_only_think_tags() {
+        let json = r#"{"choices":[{"message":{"content":"<think>secret</think>","reasoning_content":"Fallback text"}}]}"#;
+        let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+        let msg = &resp.choices[0].message;
+        assert_eq!(msg.effective_content(), "Fallback text");
+        assert_eq!(
+            msg.effective_content_optional().as_deref(),
+            Some("Fallback text")
+        );
     }
 
     #[test]

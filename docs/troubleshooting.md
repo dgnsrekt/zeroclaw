@@ -2,7 +2,7 @@
 
 This guide focuses on common setup/runtime failures and fast resolution paths.
 
-Last verified: **February 18, 2026**.
+Last verified: **February 20, 2026**.
 
 ## Installation / Bootstrap
 
@@ -31,6 +31,93 @@ Fix:
 ```bash
 ./bootstrap.sh --install-system-deps
 ```
+
+### Build fails on low-RAM / low-disk hosts
+
+Symptoms:
+
+- `cargo build --release` is killed (`signal: 9`, OOM killer, or `cannot allocate memory`)
+- Build crashes after adding swap because disk space runs out
+
+Why this happens:
+
+- Runtime memory (<5MB for common operations) is not the same as compile-time memory.
+- Full source build can require **2 GB RAM + swap** and **6+ GB free disk**.
+- Enabling swap on a tiny disk can avoid RAM OOM but still fail due to disk exhaustion.
+
+Preferred path for constrained machines:
+
+```bash
+./bootstrap.sh --prefer-prebuilt
+```
+
+Binary-only mode (no source fallback):
+
+```bash
+./bootstrap.sh --prebuilt-only
+```
+
+If you must compile from source on constrained hosts:
+
+1. Add swap only if you also have enough free disk for both swap + build output.
+1. Limit cargo parallelism:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo build --release --locked
+```
+
+1. Reduce heavy features when Matrix is not required:
+
+```bash
+cargo build --release --locked --no-default-features --features hardware
+```
+
+1. Cross-compile on a stronger machine and copy the binary to the target host.
+
+### Build is very slow or appears stuck
+
+Symptoms:
+
+- `cargo check` / `cargo build` appears stuck at `Checking zeroclaw` for a long time
+- repeated `Blocking waiting for file lock on package cache` or `build directory`
+
+Why this happens in ZeroClaw:
+
+- Matrix E2EE stack (`matrix-sdk`, `ruma`, `vodozemac`) is large and expensive to type-check.
+- TLS + crypto native build scripts (`aws-lc-sys`, `ring`) add noticeable compile time.
+- `rusqlite` with bundled SQLite compiles C code locally.
+- Running multiple cargo jobs/worktrees in parallel causes lock contention.
+
+Fast checks:
+
+```bash
+cargo check --timings
+cargo tree -d
+```
+
+The timing report is written to `target/cargo-timings/cargo-timing.html`.
+
+Faster local iteration (when Matrix channel is not needed):
+
+```bash
+cargo check --no-default-features --features hardware
+```
+
+This skips `channel-matrix` and can significantly reduce compile time.
+
+To build with Matrix support explicitly enabled:
+
+```bash
+cargo check --no-default-features --features hardware,channel-matrix
+```
+
+Lock-contention mitigation:
+
+```bash
+pgrep -af "cargo (check|build|test)|cargo check|cargo build|cargo test"
+```
+
+Stop unrelated cargo jobs before running your own build.
 
 ### `zeroclaw` command not found after install
 

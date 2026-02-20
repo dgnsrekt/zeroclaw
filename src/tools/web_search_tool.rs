@@ -289,7 +289,10 @@ impl Tool for WebSearchTool {
             "duckduckgo" | "ddg" => self.search_duckduckgo(query).await?,
             "brave" => self.search_brave(query).await?,
             "searxng" => self.search_searxng(query).await?,
-            _ => anyhow::bail!("Unknown search provider: {}", self.provider),
+            _ => anyhow::bail!(
+                "Unknown search provider: '{}'. Set tools.web_search.provider to 'duckduckgo', 'brave', or 'searxng' in config.toml",
+                self.provider
+            ),
         };
 
         Ok(ToolResult {

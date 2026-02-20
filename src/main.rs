@@ -33,11 +33,20 @@
 )]
 
 use anyhow::{bail, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use dialoguer::{Input, Password};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
+
+fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
+    let t: f64 = s.parse().map_err(|e| format!("{e}"))?;
+    if !(0.0..=2.0).contains(&t) {
+        return Err("temperature must be between 0.0 and 2.0".to_string());
+    }
+    Ok(t)
+}
 
 mod agent;
 mod approval;
@@ -58,6 +67,7 @@ mod identity;
 mod integrations;
 mod memory;
 mod migration;
+mod multimodal;
 mod observability;
 mod onboard;
 mod peripherals;
@@ -95,10 +105,26 @@ enum ServiceCommands {
     Start,
     /// Stop daemon service
     Stop,
+    /// Restart daemon service to apply latest config
+    Restart,
     /// Check daemon service status
     Status,
     /// Uninstall daemon service unit
     Uninstall,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum CompletionShell {
+    #[value(name = "bash")]
+    Bash,
+    #[value(name = "fish")]
+    Fish,
+    #[value(name = "zsh")]
+    Zsh,
+    #[value(name = "powershell")]
+    PowerShell,
+    #[value(name = "elvish")]
+    Elvish,
 }
 
 #[derive(Subcommand, Debug)]
@@ -120,13 +146,26 @@ enum Commands {
         /// Provider name (used in quick mode, default: openrouter)
         #[arg(long)]
         provider: Option<String>,
-
+        /// Model ID override (used in quick mode)
+        #[arg(long)]
+        model: Option<String>,
         /// Memory backend (sqlite, lucid, markdown, none) - used in quick mode, default: sqlite
         #[arg(long)]
         memory: Option<String>,
     },
 
     /// Start the AI agent loop
+    #[command(long_about = "\
+Start the AI agent loop.
+
+Launches an interactive chat session with the configured AI provider. \
+Use --message for single-shot queries without entering interactive mode.
+
+Examples:
+  zeroclaw agent                              # interactive session
+  zeroclaw agent -m \"Summarize today's logs\"  # single message
+  zeroclaw agent -p anthropic --model claude-sonnet-4-20250514
+  zeroclaw agent --peripheral nucleo-f401re:/dev/ttyACM0")]
     Agent {
         /// Single message mode (don't enter interactive mode)
         #[arg(short, long)]
@@ -141,7 +180,7 @@ enum Commands {
         model: Option<String>,
 
         /// Temperature (0.0 - 2.0)
-        #[arg(short, long, default_value = "0.7")]
+        #[arg(short, long, default_value = "0.7", value_parser = parse_temperature)]
         temperature: f64,
 
         /// Attach a peripheral (board:path, e.g. nucleo-f401re:/dev/ttyACM0)
@@ -150,6 +189,18 @@ enum Commands {
     },
 
     /// Start the gateway server (webhooks, websockets)
+    #[command(long_about = "\
+Start the gateway server (webhooks, websockets).
+
+Runs the HTTP/WebSocket gateway that accepts incoming webhook events \
+and WebSocket connections. Bind address defaults to the values in \
+your config file (gateway.host / gateway.port).
+
+Examples:
+  zeroclaw gateway                  # use config defaults
+  zeroclaw gateway -p 8080          # listen on port 8080
+  zeroclaw gateway --host 0.0.0.0   # bind to all interfaces
+  zeroclaw gateway -p 0             # random available port")]
     Gateway {
         /// Port to listen on (use 0 for random available port); defaults to config gateway.port
         #[arg(short, long)]
@@ -161,6 +212,21 @@ enum Commands {
     },
 
     /// Start long-running autonomous runtime (gateway + channels + heartbeat + scheduler)
+    #[command(long_about = "\
+Start the long-running autonomous daemon.
+
+Launches the full ZeroClaw runtime: gateway server, all configured \
+channels (Telegram, Discord, Slack, etc.), heartbeat monitor, and \
+the cron scheduler. This is the recommended way to run ZeroClaw in \
+production or as an always-on assistant.
+
+Use 'zeroclaw service install' to register the daemon as an OS \
+service (systemd/launchd) for auto-start on boot.
+
+Examples:
+  zeroclaw daemon                   # use config defaults
+  zeroclaw daemon -p 9090           # gateway on port 9090
+  zeroclaw daemon --host 127.0.0.1  # localhost only")]
     Daemon {
         /// Port to listen on (use 0 for random available port); defaults to config gateway.port
         #[arg(short, long)]
@@ -187,6 +253,25 @@ enum Commands {
     Status,
 
     /// Configure and manage scheduled tasks
+    #[command(long_about = "\
+Configure and manage scheduled tasks.
+
+Schedule recurring, one-shot, or interval-based tasks using cron \
+expressions, RFC 3339 timestamps, durations, or fixed intervals.
+
+Cron expressions use the standard 5-field format: \
+'min hour day month weekday'. Timezones default to UTC; \
+override with --tz and an IANA timezone name.
+
+Examples:
+  zeroclaw cron list
+  zeroclaw cron add '0 9 * * 1-5' 'Good morning' --tz America/New_York
+  zeroclaw cron add '*/30 * * * *' 'Check system health'
+  zeroclaw cron add-at 2025-01-15T14:00:00Z 'Send reminder'
+  zeroclaw cron add-every 60000 'Ping heartbeat'
+  zeroclaw cron once 30m 'Run backup in 30 minutes'
+  zeroclaw cron pause <task-id>
+  zeroclaw cron update <task-id> --expression '0 8 * * *' --tz Europe/London")]
     Cron {
         #[command(subcommand)]
         cron_command: CronCommands,
@@ -202,6 +287,19 @@ enum Commands {
     Providers,
 
     /// Manage channels (telegram, discord, slack)
+    #[command(long_about = "\
+Manage communication channels.
+
+Add, remove, list, and health-check channels that connect ZeroClaw \
+to messaging platforms. Supported channel types: telegram, discord, \
+slack, whatsapp, matrix, imessage, email.
+
+Examples:
+  zeroclaw channel list
+  zeroclaw channel doctor
+  zeroclaw channel add telegram '{\"bot_token\":\"...\",\"name\":\"my-bot\"}'
+  zeroclaw channel remove my-bot
+  zeroclaw channel bind-telegram zeroclaw_user")]
     Channel {
         #[command(subcommand)]
         channel_command: ChannelCommands,
@@ -232,16 +330,78 @@ enum Commands {
     },
 
     /// Discover and introspect USB hardware
+    #[command(long_about = "\
+Discover and introspect USB hardware.
+
+Enumerate connected USB devices, identify known development boards \
+(STM32 Nucleo, Arduino, ESP32), and retrieve chip information via \
+probe-rs / ST-Link.
+
+Examples:
+  zeroclaw hardware discover
+  zeroclaw hardware introspect /dev/ttyACM0
+  zeroclaw hardware info --chip STM32F401RETx")]
     Hardware {
         #[command(subcommand)]
         hardware_command: zeroclaw::HardwareCommands,
     },
 
     /// Manage hardware peripherals (STM32, RPi GPIO, etc.)
+    #[command(long_about = "\
+Manage hardware peripherals.
+
+Add, list, flash, and configure hardware boards that expose tools \
+to the agent (GPIO, sensors, actuators). Supported boards: \
+nucleo-f401re, rpi-gpio, esp32, arduino-uno.
+
+Examples:
+  zeroclaw peripheral list
+  zeroclaw peripheral add nucleo-f401re /dev/ttyACM0
+  zeroclaw peripheral add rpi-gpio native
+  zeroclaw peripheral flash --port /dev/cu.usbmodem12345
+  zeroclaw peripheral flash-nucleo")]
     Peripheral {
         #[command(subcommand)]
         peripheral_command: zeroclaw::PeripheralCommands,
     },
+
+    /// Manage configuration
+    #[command(long_about = "\
+Manage ZeroClaw configuration.
+
+Inspect and export configuration settings. Use 'schema' to dump \
+the full JSON Schema for the config file, which documents every \
+available key, type, and default value.
+
+Examples:
+  zeroclaw config schema              # print JSON Schema to stdout
+  zeroclaw config schema > schema.json")]
+    Config {
+        #[command(subcommand)]
+        config_command: ConfigCommands,
+    },
+
+    /// Generate shell completion script to stdout
+    #[command(long_about = "\
+Generate shell completion scripts for `zeroclaw`.
+
+The script is printed to stdout so it can be sourced directly:
+
+Examples:
+  source <(zeroclaw completions bash)
+  zeroclaw completions zsh > ~/.zfunc/_zeroclaw
+  zeroclaw completions fish > ~/.config/fish/completions/zeroclaw.fish")]
+    Completions {
+        /// Target shell
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommands {
+    /// Dump the full configuration JSON Schema to stdout
+    Schema,
 }
 
 #[derive(Subcommand, Debug)]
@@ -381,6 +541,23 @@ enum CronCommands {
         /// Task ID
         id: String,
     },
+    /// Update a scheduled task
+    Update {
+        /// Task ID
+        id: String,
+        /// New cron expression
+        #[arg(long)]
+        expression: Option<String>,
+        /// New IANA timezone
+        #[arg(long)]
+        tz: Option<String>,
+        /// New command to run
+        #[arg(long)]
+        command: Option<String>,
+        /// New job name
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Pause a scheduled task
     Pause {
         /// Task ID
@@ -452,9 +629,9 @@ enum ChannelCommands {
 enum SkillCommands {
     /// List installed skills
     List,
-    /// Install a skill from a GitHub URL or local path
+    /// Install a skill from a git URL (HTTPS/SSH) or local path
     Install {
-        /// GitHub URL or local path
+        /// Git URL (HTTPS/SSH) or local path
         source: String,
     },
     /// Remove an installed skill
@@ -493,6 +670,14 @@ async fn main() -> Result<()> {
     }
     let _ = dotenvy::dotenv();
 
+    // Completions must remain stdout-only and should not load config or initialize logging.
+    // This avoids warnings/log lines corrupting sourced completion scripts.
+    if let Commands::Completions { shell } = &cli.command {
+        let mut stdout = std::io::stdout().lock();
+        write_shell_completion(*shell, &mut stdout)?;
+        return Ok(());
+    }
+
     // Initialize logging - respects RUST_LOG env var, defaults to INFO
     let subscriber = fmt::Subscriber::builder()
         .with_env_filter(
@@ -511,6 +696,7 @@ async fn main() -> Result<()> {
         channels_only,
         api_key,
         provider,
+        model,
         memory,
     } = &cli.command
     {
@@ -518,25 +704,30 @@ async fn main() -> Result<()> {
         let channels_only = *channels_only;
         let api_key = api_key.clone();
         let provider = provider.clone();
+        let model = model.clone();
         let memory = memory.clone();
 
         if interactive && channels_only {
             bail!("Use either --interactive or --channels-only, not both");
         }
-        if channels_only && (api_key.is_some() || provider.is_some() || memory.is_some()) {
-            bail!("--channels-only does not accept --api-key, --provider, or --memory");
+        if channels_only
+            && (api_key.is_some() || provider.is_some() || model.is_some() || memory.is_some())
+        {
+            bail!("--channels-only does not accept --api-key, --provider, --model, or --memory");
         }
-
-        let config = tokio::task::spawn_blocking(move || {
-            if channels_only {
-                onboard::run_channels_repair_wizard()
-            } else if interactive {
-                onboard::run_wizard()
-            } else {
-                onboard::run_quick_setup(api_key.as_deref(), provider.as_deref(), memory.as_deref())
-            }
-        })
-        .await??;
+        let config = if channels_only {
+            onboard::run_channels_repair_wizard().await
+        } else if interactive {
+            onboard::run_wizard().await
+        } else {
+            onboard::run_quick_setup(
+                api_key.as_deref(),
+                provider.as_deref(),
+                model.as_deref(),
+                memory.as_deref(),
+            )
+            .await
+        }?;
         // Auto-start channels if user said yes during wizard
         if std::env::var("ZEROCLAW_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
             channels::start_channels(config).await?;
@@ -545,11 +736,12 @@ async fn main() -> Result<()> {
     }
 
     // All other commands need config loaded first
-    let mut config = Config::load_or_init()?;
+    let mut config = Config::load_or_init().await?;
     config.apply_env_overrides();
 
     match cli.command {
         Commands::Onboard { .. } => unreachable!(),
+        Commands::Completions { .. } => unreachable!(),
 
         Commands::Agent {
             message,
@@ -733,16 +925,14 @@ async fn main() -> Result<()> {
         Commands::Channel { channel_command } => match channel_command {
             ChannelCommands::Start => channels::start_channels(config).await,
             ChannelCommands::Doctor => channels::doctor_channels(config).await,
-            other => channels::handle_command(other, &config),
+            other => channels::handle_command(other, &config).await,
         },
 
         Commands::Integrations {
             integration_command,
         } => integrations::handle_command(integration_command, &config),
 
-        Commands::Skills { skill_command } => {
-            skills::handle_command(skill_command, &config.workspace_dir)
-        }
+        Commands::Skills { skill_command } => skills::handle_command(skill_command, &config),
 
         Commands::Migrate { migrate_command } => {
             migration::handle_command(migrate_command, &config).await
@@ -755,9 +945,41 @@ async fn main() -> Result<()> {
         }
 
         Commands::Peripheral { peripheral_command } => {
-            peripherals::handle_command(peripheral_command.clone(), &config)
+            peripherals::handle_command(peripheral_command.clone(), &config).await
         }
+
+        Commands::Config { config_command } => match config_command {
+            ConfigCommands::Schema => {
+                let schema = schemars::schema_for!(config::Config);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&schema).expect("failed to serialize JSON Schema")
+                );
+                Ok(())
+            }
+        },
     }
+}
+
+fn write_shell_completion<W: Write>(shell: CompletionShell, writer: &mut W) -> Result<()> {
+    use clap_complete::generate;
+    use clap_complete::shells;
+
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+
+    match shell {
+        CompletionShell::Bash => generate(shells::Bash, &mut cmd, bin_name.clone(), writer),
+        CompletionShell::Fish => generate(shells::Fish, &mut cmd, bin_name.clone(), writer),
+        CompletionShell::Zsh => generate(shells::Zsh, &mut cmd, bin_name.clone(), writer),
+        CompletionShell::PowerShell => {
+            generate(shells::PowerShell, &mut cmd, bin_name.clone(), writer);
+        }
+        CompletionShell::Elvish => generate(shells::Elvish, &mut cmd, bin_name, writer),
+    }
+
+    writer.flush()?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -942,12 +1164,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         let account_id =
                             extract_openai_account_id_for_profile(&token_set.access_token);
 
-                        let saved = auth_service
-                            .store_openai_tokens(&profile, token_set, account_id, true)?;
+                        auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
                         clear_pending_openai_login(config);
 
-                        println!("Saved profile {}", saved.id);
-                        println!("Active profile for openai-codex: {}", saved.id);
+                        println!("Saved profile {profile}");
+                        println!("Active profile for openai-codex: {profile}");
                         return Ok(());
                     }
                     Err(e) => {
@@ -993,11 +1214,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 auth::openai_oauth::exchange_code_for_tokens(&client, &code, &pkce).await?;
             let account_id = extract_openai_account_id_for_profile(&token_set.access_token);
 
-            let saved = auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
+            auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
             clear_pending_openai_login(config);
 
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for openai-codex: {}", saved.id);
+            println!("Saved profile {profile}");
+            println!("Active profile for openai-codex: {profile}");
             Ok(())
         }
 
@@ -1046,11 +1267,11 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 auth::openai_oauth::exchange_code_for_tokens(&client, &code, &pkce).await?;
             let account_id = extract_openai_account_id_for_profile(&token_set.access_token);
 
-            let saved = auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
+            auth_service.store_openai_tokens(&profile, token_set, account_id, true)?;
             clear_pending_openai_login(config);
 
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for openai-codex: {}", saved.id);
+            println!("Saved profile {profile}");
+            println!("Active profile for openai-codex: {profile}");
             Ok(())
         }
 
@@ -1076,10 +1297,9 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 kind.as_metadata_value().to_string(),
             );
 
-            let saved =
-                auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for {provider}: {}", saved.id);
+            auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
+            println!("Saved profile {profile}");
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1097,10 +1317,9 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 kind.as_metadata_value().to_string(),
             );
 
-            let saved =
-                auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
-            println!("Saved profile {}", saved.id);
-            println!("Active profile for {provider}: {}", saved.id);
+            auth_service.store_provider_token(&provider, &profile, &token, metadata, true)?;
+            println!("Saved profile {profile}");
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1139,8 +1358,8 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
 
         AuthCommands::Use { provider, profile } => {
             let provider = auth::normalize_provider(&provider)?;
-            let active = auth_service.set_active_profile(&provider, &profile)?;
-            println!("Active profile for {provider}: {active}");
+            auth_service.set_active_profile(&provider, &profile)?;
+            println!("Active profile for {provider}: {profile}");
             Ok(())
         }
 
@@ -1181,15 +1400,15 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                     marker,
                     id,
                     profile.kind,
-                    profile.account_id.as_deref().unwrap_or("unknown"),
+                    crate::security::redact(profile.account_id.as_deref().unwrap_or("unknown")),
                     format_expiry(profile)
                 );
             }
 
             println!();
             println!("Active profiles:");
-            for (provider, active) in &data.active_profiles {
-                println!("  {provider}: {active}");
+            for (provider, profile_id) in &data.active_profiles {
+                println!("  {provider}: {profile_id}");
             }
 
             Ok(())
@@ -1200,10 +1419,85 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     #[test]
     fn cli_definition_has_no_flag_conflicts() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn onboard_help_includes_model_flag() {
+        let cmd = Cli::command();
+        let onboard = cmd
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "onboard")
+            .expect("onboard subcommand must exist");
+
+        let has_model_flag = onboard
+            .get_arguments()
+            .any(|arg| arg.get_id().as_str() == "model" && arg.get_long() == Some("model"));
+
+        assert!(
+            has_model_flag,
+            "onboard help should include --model for quick setup overrides"
+        );
+    }
+
+    #[test]
+    fn onboard_cli_accepts_model_provider_and_api_key_in_quick_mode() {
+        let cli = Cli::try_parse_from([
+            "zeroclaw",
+            "onboard",
+            "--provider",
+            "openrouter",
+            "--model",
+            "custom-model-946",
+            "--api-key",
+            "sk-issue946",
+        ])
+        .expect("quick onboard invocation should parse");
+
+        match cli.command {
+            Commands::Onboard {
+                interactive,
+                channels_only,
+                api_key,
+                provider,
+                model,
+                ..
+            } => {
+                assert!(!interactive);
+                assert!(!channels_only);
+                assert_eq!(provider.as_deref(), Some("openrouter"));
+                assert_eq!(model.as_deref(), Some("custom-model-946"));
+                assert_eq!(api_key.as_deref(), Some("sk-issue946"));
+            }
+            other => panic!("expected onboard command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn completions_cli_parses_supported_shells() {
+        for shell in ["bash", "fish", "zsh", "powershell", "elvish"] {
+            let cli = Cli::try_parse_from(["zeroclaw", "completions", shell])
+                .expect("completions invocation should parse");
+            match cli.command {
+                Commands::Completions { .. } => {}
+                other => panic!("expected completions command, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn completion_generation_mentions_binary_name() {
+        let mut output = Vec::new();
+        write_shell_completion(CompletionShell::Bash, &mut output)
+            .expect("completion generation should succeed");
+        let script = String::from_utf8(output).expect("completion output should be valid utf-8");
+        assert!(
+            script.contains("zeroclaw"),
+            "completion script should reference binary name"
+        );
     }
 }

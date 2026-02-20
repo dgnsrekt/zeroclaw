@@ -51,7 +51,42 @@ Notes:
 - Model cache previews come from `zeroclaw models refresh --provider <ID>`.
 - These are runtime chat commands, not CLI subcommands.
 
+## Inbound Image Marker Protocol
+
+ZeroClaw supports multimodal input through inline message markers:
+
+- Syntax: ``[IMAGE:<source>]``
+- `<source>` can be:
+  - Local file path
+  - Data URI (`data:image/...;base64,...`)
+  - Remote URL only when `[multimodal].allow_remote_fetch = true`
+
+Operational notes:
+
+- Marker parsing applies to user-role messages before provider calls.
+- Provider capability is enforced at runtime: if the selected provider does not support vision, the request fails with a structured capability error (`capability=vision`).
+- Linq webhook `media` parts with `image/*` MIME type are automatically converted to this marker format.
+
 ## Channel Matrix
+
+### Build Feature Toggle (`channel-matrix`)
+
+Matrix support is controlled at compile time by the `channel-matrix` Cargo feature.
+
+- Default builds include Matrix support (`default = ["hardware", "channel-matrix"]`).
+- For faster local iteration when Matrix is not needed:
+
+```bash
+cargo check --no-default-features --features hardware
+```
+
+- To explicitly enable Matrix support in custom feature sets:
+
+```bash
+cargo check --no-default-features --features hardware,channel-matrix
+```
+
+If `[channels_config.matrix]` is present but the binary was built without `channel-matrix`, `zeroclaw channel list`, `zeroclaw channel doctor`, and `zeroclaw channel start` will log that Matrix is intentionally skipped for this build.
 
 ---
 
@@ -66,7 +101,7 @@ Notes:
 | Mattermost | polling | No |
 | Matrix | sync API (supports E2EE) | No |
 | Signal | signal-cli HTTP bridge | No (local bridge endpoint) |
-| WhatsApp | webhook | Yes (public HTTPS callback) |
+| WhatsApp | webhook (Cloud API) or websocket (Web mode) | Cloud API: Yes (public HTTPS callback), Web mode: No |
 | Webhook | gateway endpoint (`/webhook`) | Usually yes |
 | Email | IMAP polling + SMTP send | No |
 | IRC | IRC socket | No |
@@ -103,7 +138,16 @@ Field names differ by channel:
 [channels_config.telegram]
 bot_token = "123456:telegram-token"
 allowed_users = ["*"]
+stream_mode = "off"               # optional: off | partial
+draft_update_interval_ms = 1000   # optional: edit throttle for partial streaming
+mention_only = false              # optional: require @mention in groups
+interrupt_on_new_message = false  # optional: cancel in-flight same-sender same-chat request
 ```
+
+Telegram notes:
+
+- `interrupt_on_new_message = true` preserves interrupted user turns in conversation history, then restarts generation on the newest message.
+- Interruption scope is strict: same sender in the same chat. Messages from different chats are processed independently.
 
 ### 4.2 Discord
 
@@ -164,6 +208,13 @@ ignore_stories = true
 
 ### 4.7 WhatsApp
 
+ZeroClaw supports two WhatsApp backends:
+
+- **Cloud API mode** (`phone_number_id` + `access_token` + `verify_token`)
+- **WhatsApp Web mode** (`session_path`, requires build flag `--features whatsapp-web`)
+
+Cloud API mode:
+
 ```toml
 [channels_config.whatsapp]
 access_token = "EAAB..."
@@ -172,6 +223,22 @@ verify_token = "your-verify-token"
 app_secret = "your-app-secret"     # optional but recommended
 allowed_numbers = ["*"]
 ```
+
+WhatsApp Web mode:
+
+```toml
+[channels_config.whatsapp]
+session_path = "~/.zeroclaw/state/whatsapp-web/session.db"
+pair_phone = "15551234567"         # optional; omit to use QR flow
+pair_code = ""                     # optional custom pair code
+allowed_numbers = ["*"]
+```
+
+Notes:
+
+- Build with `cargo build --features whatsapp-web` (or equivalent run command).
+- Keep `session_path` on persistent storage to avoid relinking after restart.
+- Reply routing uses the originating chat JID, so direct and group replies work correctly.
 
 ### 4.8 Webhook Channel Config (Gateway)
 
@@ -244,6 +311,12 @@ The wizard now includes a dedicated **Lark/Feishu** step with:
 - credential verification against official Open Platform auth endpoint
 - receive mode selection (`websocket` or `webhook`)
 - optional webhook verification token prompt (recommended for stronger callback authenticity checks)
+
+Runtime token behavior:
+
+- `tenant_access_token` is cached with a refresh deadline based on `expire`/`expires_in` from the auth response.
+- send requests automatically retry once after token invalidation when Feishu/Lark returns either HTTP `401` or business error code `99991663` (`Invalid access token`).
+- if the retry still returns token-invalid responses, the send call fails with the upstream status/body for easier troubleshooting.
 
 ### 4.12 DingTalk
 
@@ -331,7 +404,7 @@ rg -n "Matrix|Telegram|Discord|Slack|Mattermost|Signal|WhatsApp|Email|IRC|Lark|D
 | Mattermost | `Mattermost channel listening on` | `Mattermost: ignoring message from unauthorized user:` | `Mattermost poll error:` / `Mattermost parse error:` |
 | Matrix | `Matrix channel listening on room` / `Matrix room ... is encrypted; E2EE decryption is enabled via matrix-sdk.` | `Matrix whoami failed; falling back to configured session hints for E2EE session restore:` / `Matrix whoami failed while resolving listener user_id; using configured user_id hint:` | `Matrix sync error: ... retrying...` |
 | Signal | `Signal channel listening via SSE on` | (allowlist checks are enforced by `allowed_from`) | `Signal SSE returned ...` / `Signal SSE connect error:` |
-| WhatsApp (channel) | `WhatsApp channel active (webhook mode).` | `WhatsApp: ignoring message from unauthorized number:` | `WhatsApp send failed:` |
+| WhatsApp (channel) | `WhatsApp channel active (webhook mode).` / `WhatsApp Web connected successfully` | `WhatsApp: ignoring message from unauthorized number:` / `WhatsApp Web: message from ... not in allowed list` | `WhatsApp send failed:` / `WhatsApp Web stream error:` |
 | Webhook / WhatsApp (gateway) | `WhatsApp webhook verified successfully` | `Webhook: rejected — not paired / invalid bearer token` / `Webhook: rejected request — invalid or missing X-Webhook-Secret` / `WhatsApp webhook verification failed — token mismatch` | `Webhook JSON parse error:` |
 | Email | `Email polling every ...` / `Email sent to ...` | `Blocked email from ...` | `Email poll failed:` / `Email poll task panicked:` |
 | IRC | `IRC channel connecting to ...` / `IRC registered as ...` | (allowlist checks are enforced by `allowed_users`) | `IRC SASL authentication failed (...)` / `IRC server does not support SASL...` / `IRC nickname ... is in use, trying ...` |
@@ -349,4 +422,3 @@ If a specific channel task crashes or exits, the channel supervisor in `channels
 - `Channel message worker crashed:`
 
 These messages indicate automatic restart behavior is active, and you should inspect preceding logs for root cause.
-
