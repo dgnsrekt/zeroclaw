@@ -361,6 +361,95 @@ fn parse_tool_calls_from_json_value(value: &serde_json::Value) -> Vec<ParsedTool
     calls
 }
 
+/// Parse XML-element-style tool calls from content inside `<tool_call>` tags.
+///
+/// Some models (e.g. MiniMax) ignore JSON formatting instructions and emit
+/// XML-element tool calls inside `<tool_call>` wrappers. Two variants:
+///
+/// Format A (Anthropic-style):
+/// ```text
+/// <invoke name="shell">
+/// <parameter name="command">ls -la</parameter>
+/// </invoke>
+/// ```
+///
+/// Format B (generic):
+/// ```text
+/// <tool name="memory_recall">
+/// <tool_arg>recent news</tool_arg>
+/// </tool>
+/// ```
+fn parse_xml_element_tool_calls(inner: &str) -> Vec<ParsedToolCall> {
+    let mut calls = Vec::new();
+
+    // Regex for Format A: <invoke name="tool"> with <parameter name="key">value</parameter>
+    static INVOKE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<invoke\s+name\s*=\s*"([^"]+)"[^>]*>(.*?)</invoke>"#).unwrap()
+    });
+    static PARAM_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<parameter\s+name\s*=\s*"([^"]+)"[^>]*>(.*?)</parameter>"#).unwrap()
+    });
+
+    for cap in INVOKE_RE.captures_iter(inner) {
+        let name = cap[1].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let body = &cap[2];
+        let mut args = serde_json::Map::new();
+        for param_cap in PARAM_RE.captures_iter(body) {
+            let key = param_cap[1].trim().to_string();
+            let value = param_cap[2].trim().to_string();
+            args.insert(key, serde_json::Value::String(value));
+        }
+        calls.push(ParsedToolCall {
+            name,
+            arguments: serde_json::Value::Object(args),
+        });
+    }
+
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // Regex for Format B: <tool name="tool"> with <tool_arg>value</tool_arg>
+    static TOOL_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?s)<tool\s+name\s*=\s*"([^"]+)"[^>]*>(.*?)</tool>"#).unwrap()
+    });
+    static TOOL_ARG_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?s)<tool_arg[^>]*>(.*?)</tool_arg>").unwrap()
+    });
+
+    for cap in TOOL_TAG_RE.captures_iter(inner) {
+        let name = cap[1].trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let body = &cap[2];
+        // Try named parameters first (Format A style inside <tool> tags)
+        let mut args = serde_json::Map::new();
+        let named_params: Vec<_> = PARAM_RE.captures_iter(body).collect();
+        if !named_params.is_empty() {
+            for param_cap in named_params {
+                let key = param_cap[1].trim().to_string();
+                let value = param_cap[2].trim().to_string();
+                args.insert(key, serde_json::Value::String(value));
+            }
+        } else if let Some(arg_cap) = TOOL_ARG_RE.captures(body) {
+            // Single unnamed argument — use "query" as the default key,
+            // which is the most common single-param tool schema.
+            let value = arg_cap[1].trim().to_string();
+            args.insert("query".to_string(), serde_json::Value::String(value));
+        }
+        calls.push(ParsedToolCall {
+            name,
+            arguments: serde_json::Value::Object(args),
+        });
+    }
+
+    calls
+}
+
 const TOOL_CALL_OPEN_TAGS: [&str; 4] = ["<tool_call>", "<toolcall>", "<tool-call>", "<invoke>"];
 
 fn find_first_tag<'a>(haystack: &str, tags: &'a [&'a str]) -> Option<(usize, &'a str)> {
@@ -660,6 +749,16 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
                 if !parsed_calls.is_empty() {
                     parsed_any = true;
                     calls.extend(parsed_calls);
+                }
+            }
+
+            // Fallback: try XML-element parsing for models that emit
+            // <invoke>/<tool> elements instead of JSON (e.g. MiniMax).
+            if !parsed_any {
+                let xml_calls = parse_xml_element_tool_calls(inner);
+                if !xml_calls.is_empty() {
+                    parsed_any = true;
+                    calls.extend(xml_calls);
                 }
             }
 
@@ -3323,6 +3422,77 @@ Let me check the result."#;
             text.contains("help you"),
             "text before tool call should be preserved"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // XML-element tool-call fallback (MiniMax and similar models)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_tool_calls_xml_invoke_format() {
+        // MiniMax Anthropic-style: <invoke name="..."><parameter name="...">value</parameter></invoke>
+        let response = r#"<tool_call>
+<invoke name="shell">
+<parameter name="command">curl -s "https://news.example.com"</parameter>
+</invoke>
+</tool_call>"#;
+        let (_text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1, "should parse XML invoke format");
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments.get("command").and_then(|v| v.as_str()),
+            Some(r#"curl -s "https://news.example.com""#)
+        );
+    }
+
+    #[test]
+    fn parse_tool_calls_xml_tool_tag_format() {
+        // MiniMax generic style: <tool name="..."><tool_arg>value</tool_arg></tool>
+        let response = r#"<tool_call>
+<tool name="memory_recall">
+<tool_arg>recent conversations, news, market updates</tool_arg>
+</tool>
+</tool_call>"#;
+        let (_text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1, "should parse XML tool tag format");
+        assert_eq!(calls[0].name, "memory_recall");
+        assert_eq!(
+            calls[0].arguments.get("query").and_then(|v| v.as_str()),
+            Some("recent conversations, news, market updates")
+        );
+    }
+
+    #[test]
+    fn parse_tool_calls_xml_invoke_multiple_params() {
+        let response = r#"<tool_call>
+<invoke name="http_request">
+<parameter name="url">https://api.example.com/data</parameter>
+<parameter name="method">GET</parameter>
+</invoke>
+</tool_call>"#;
+        let (_text, calls) = parse_tool_calls(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "http_request");
+        assert_eq!(
+            calls[0].arguments.get("url").and_then(|v| v.as_str()),
+            Some("https://api.example.com/data")
+        );
+        assert_eq!(
+            calls[0].arguments.get("method").and_then(|v| v.as_str()),
+            Some("GET")
+        );
+    }
+
+    #[test]
+    fn parse_xml_element_tool_calls_empty_inner() {
+        let calls = parse_xml_element_tool_calls("");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_xml_element_tool_calls_no_xml_elements() {
+        let calls = parse_xml_element_tool_calls("just plain text");
+        assert!(calls.is_empty());
     }
 
     // ─────────────────────────────────────────────────────────────────────
