@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "telegram-mcp": {
+      "command": "/home/dgnsrekt/.local/bin/uv",
+      "args": [
+        "--directory",
+        "/home/dgnsrekt/Services/telegram-mcp",
+        "run",
+        "main.py"
+      ]
+    },
+    "codex": {
+      "command": "codex",
+      "args": [
+        "mcp-server"
+      ]
+    }
+  }
+}
