@@ -262,6 +262,7 @@ async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> 
             let channel = TelegramChannel::new(
                 tg.bot_token.clone(),
                 tg.allowed_users.clone(),
+                tg.allowed_channels.clone(),
                 tg.mention_only,
             );
             channel.send(&SendMessage::new(output, target)).await?;
