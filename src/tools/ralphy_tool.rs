@@ -4,6 +4,7 @@ use crate::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::io::Write as _;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -30,6 +31,9 @@ impl RalphyTool {
              - Descriptive title (the agent sees this as its primary instruction)\n\
              - Optional description for additional context\n\
              \n\
+             working_dir: Project directory name (relative to workspace, e.g. \"my-app\") or absolute path.\n\
+             Must be inside the workspace. Created automatically if it does not exist.\n\
+             \n\
              Use parallel_group to run independent tasks concurrently (same group number = run together).\n\
              Tasks without parallel_group run sequentially.\n\
              \n\
@@ -41,6 +45,90 @@ impl RalphyTool {
             config,
             description,
         }
+    }
+
+    /// Resolve and validate working_dir is inside the workspace.
+    /// Creates the directory if it does not exist.
+    fn resolve_working_dir(&self, raw: &str) -> Result<PathBuf, String> {
+        let workspace = &self.security.workspace_dir;
+        let candidate = PathBuf::from(raw);
+
+        // Resolve: relative paths are joined to workspace, absolute used as-is
+        let resolved = if candidate.is_absolute() {
+            candidate
+        } else {
+            workspace.join(&candidate)
+        };
+
+        // Canonicalize the parent to resolve ".." etc, then re-append the final component.
+        // This handles cases where the directory doesn't exist yet.
+        let canonical = if resolved.exists() {
+            resolved.canonicalize().map_err(|e| {
+                format!(
+                    "Failed to resolve working_dir '{}': {}",
+                    resolved.display(),
+                    e
+                )
+            })?
+        } else {
+            // Parent must exist (or be creatable within workspace)
+            let parent = resolved.parent().unwrap_or(&resolved);
+            let parent_canonical = if parent.exists() {
+                parent.canonicalize().map_err(|e| {
+                    format!(
+                        "Failed to resolve parent of working_dir '{}': {}",
+                        resolved.display(),
+                        e
+                    )
+                })?
+            } else {
+                // For deeply nested new paths, ensure the whole chain is under workspace
+                // by checking the resolved path textually after normalization
+                parent.to_path_buf()
+            };
+            match resolved.file_name() {
+                Some(name) => parent_canonical.join(name),
+                None => parent_canonical,
+            }
+        };
+
+        // Canonicalize workspace for comparison
+        let workspace_canonical = if workspace.exists() {
+            workspace.canonicalize().map_err(|e| {
+                format!(
+                    "Failed to resolve workspace '{}': {}",
+                    workspace.display(),
+                    e
+                )
+            })?
+        } else {
+            workspace.to_path_buf()
+        };
+
+        if !canonical.starts_with(&workspace_canonical) {
+            return Err(format!(
+                "working_dir '{}' is outside the workspace ({}). Projects must be inside the workspace.",
+                raw,
+                workspace_canonical.display()
+            ));
+        }
+
+        // Create directory if it doesn't exist (project initialization)
+        if !canonical.exists() {
+            std::fs::create_dir_all(&canonical).map_err(|e| {
+                format!(
+                    "Failed to create project directory '{}': {}",
+                    canonical.display(),
+                    e
+                )
+            })?;
+            debug!(
+                path = %canonical.display(),
+                "Created new project directory"
+            );
+        }
+
+        Ok(canonical)
     }
 }
 
@@ -58,6 +146,10 @@ impl Tool for RalphyTool {
         json!({
             "type": "object",
             "properties": {
+                "working_dir": {
+                    "type": "string",
+                    "description": "Project directory name (relative to workspace, e.g. \"my-app\") or absolute path. Must be inside the workspace. Created automatically if it does not exist."
+                },
                 "tasks": {
                     "type": "array",
                     "description": "Array of task objects. Each has: title (required string), description (optional string), parallel_group (optional integer).",
@@ -85,7 +177,7 @@ impl Tool for RalphyTool {
                     "description": "Run tasks in parallel mode (default: false)."
                 }
             },
-            "required": ["tasks"]
+            "required": ["working_dir", "tasks"]
         })
     }
 
@@ -107,17 +199,21 @@ impl Tool for RalphyTool {
             });
         }
 
-        // Validate working_dir is configured
-        let working_dir = match &self.config.working_dir {
-            Some(dir) if !dir.is_empty() => dir.clone(),
-            _ => {
+        // Parse and validate working_dir
+        let raw_working_dir = args
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'working_dir' parameter"))?;
+
+        let working_dir = match self.resolve_working_dir(raw_working_dir) {
+            Ok(p) => p,
+            Err(e) => {
                 return Ok(ToolResult {
                     success: false,
                     output: String::new(),
-                    error: Some(
-                        "Ralphy working_dir is not configured. Set [ralphy] working_dir in config.toml."
-                            .into(),
-                    ),
+                    error: Some(e),
                 });
             }
         };
@@ -224,7 +320,7 @@ impl Tool for RalphyTool {
 
         debug!(
             command = %self.config.command,
-            working_dir = %working_dir,
+            working_dir = %working_dir.display(),
             parallel,
             task_count = tasks.len(),
             "Ralphy PRD execution starting"
@@ -322,11 +418,15 @@ mod tests {
     use super::*;
     use crate::security::AutonomyLevel;
 
-    fn test_security(level: AutonomyLevel, max_actions_per_hour: u32) -> Arc<SecurityPolicy> {
+    fn test_security_with_workspace(
+        level: AutonomyLevel,
+        max_actions_per_hour: u32,
+        workspace: PathBuf,
+    ) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: level,
             max_actions_per_hour,
-            workspace_dir: std::env::temp_dir(),
+            workspace_dir: workspace,
             ..SecurityPolicy::default()
         })
     }
@@ -334,7 +434,6 @@ mod tests {
     fn test_config() -> RalphyConfig {
         RalphyConfig {
             enabled: true,
-            working_dir: Some("/tmp".to_string()),
             timeout_secs: 60,
             command: "ralphy".to_string(),
         }
@@ -342,24 +441,38 @@ mod tests {
 
     #[test]
     fn tool_name_is_ralphy() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         assert_eq!(tool.name(), "ralphy");
     }
 
     #[test]
-    fn schema_has_tasks_required() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+    fn schema_has_working_dir_and_tasks_required() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let schema = tool.parameters_schema();
         assert_eq!(schema["type"], "object");
+        assert!(schema["properties"].get("working_dir").is_some());
         assert!(schema["properties"].get("tasks").is_some());
         assert!(schema["properties"].get("parallel").is_some());
         let required = schema["required"].as_array().unwrap();
+        assert!(required.contains(&json!("working_dir")));
         assert!(required.contains(&json!("tasks")));
     }
 
     #[test]
     fn schema_tasks_is_array_with_title_required() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let schema = tool.parameters_schema();
         assert_eq!(schema["properties"]["tasks"]["type"], "array");
         let item_required = schema["properties"]["tasks"]["items"]["required"]
@@ -370,7 +483,11 @@ mod tests {
 
     #[test]
     fn schema_parallel_is_optional_bool() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let schema = tool.parameters_schema();
         assert_eq!(schema["properties"]["parallel"]["type"], "boolean");
         let required = schema["required"].as_array().unwrap();
@@ -378,19 +495,28 @@ mod tests {
     }
 
     #[test]
-    fn description_mentions_prd_codex_parallel() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+    fn description_mentions_prd_codex_parallel_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let desc = tool.description();
         assert!(desc.contains("PRD"));
         assert!(desc.contains("codex"));
         assert!(desc.contains("parallel_group"));
+        assert!(desc.contains("workspace"));
     }
 
     #[tokio::test]
     async fn execute_blocks_readonly_mode() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::ReadOnly, 100), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::ReadOnly, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let result = tool
-            .execute(json!({"tasks": [{"title": "test"}]}))
+            .execute(json!({"working_dir": "proj", "tasks": [{"title": "test"}]}))
             .await
             .unwrap();
         assert!(!result.success);
@@ -399,9 +525,13 @@ mod tests {
 
     #[tokio::test]
     async fn execute_blocks_rate_limit() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 0), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 0, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let result = tool
-            .execute(json!({"tasks": [{"title": "test"}]}))
+            .execute(json!({"working_dir": "proj", "tasks": [{"title": "test"}]}))
             .await
             .unwrap();
         assert!(!result.success);
@@ -409,25 +539,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_rejects_missing_working_dir_param() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
+        let result = tool.execute(json!({"tasks": [{"title": "test"}]})).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn execute_rejects_missing_tasks() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
-        let result = tool.execute(json!({})).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
+        let result = tool.execute(json!({"working_dir": "proj"})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn execute_rejects_empty_tasks() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
-        let result = tool.execute(json!({"tasks": []})).await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
+        let result = tool
+            .execute(json!({"working_dir": "proj", "tasks": []}))
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("empty"));
     }
 
     #[tokio::test]
     async fn execute_rejects_task_without_title() {
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), test_config());
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let result = tool
-            .execute(json!({"tasks": [{"description": "no title here"}]}))
+            .execute(json!({"working_dir": "proj", "tasks": [{"description": "no title here"}]}))
             .await
             .unwrap();
         assert!(!result.success);
@@ -435,33 +591,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_rejects_missing_working_dir() {
-        let config = RalphyConfig {
-            enabled: true,
-            working_dir: None,
-            timeout_secs: 60,
-            command: "ralphy".to_string(),
-        };
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), config);
+    async fn execute_rejects_path_outside_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            test_config(),
+        );
         let result = tool
-            .execute(json!({"tasks": [{"title": "test"}]}))
+            .execute(json!({"working_dir": "../../etc", "tasks": [{"title": "test"}]}))
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("working_dir"));
+        assert!(result.error.unwrap().contains("outside the workspace"));
+    }
+
+    #[tokio::test]
+    async fn execute_creates_project_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().to_path_buf();
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, workspace.clone()),
+            RalphyConfig {
+                enabled: true,
+                timeout_secs: 5,
+                command: "/nonexistent/path/to/ralphy".to_string(),
+            },
+        );
+
+        let project_dir = workspace.join("new-project");
+        assert!(!project_dir.exists());
+
+        // Will fail to spawn ralphy but should create the dir first
+        let result = tool
+            .execute(json!({"working_dir": "new-project", "tasks": [{"title": "init"}]}))
+            .await
+            .unwrap();
+
+        // Dir should have been created even though spawn failed
+        assert!(project_dir.exists());
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Failed to spawn"));
     }
 
     #[tokio::test]
     async fn execute_graceful_spawn_failure() {
+        let tmp = tempfile::tempdir().unwrap();
         let config = RalphyConfig {
             enabled: true,
-            working_dir: Some("/tmp".to_string()),
             timeout_secs: 60,
             command: "/nonexistent/path/to/ralphy".to_string(),
         };
-        let tool = RalphyTool::new(test_security(AutonomyLevel::Full, 100), config);
+        let tool = RalphyTool::new(
+            test_security_with_workspace(AutonomyLevel::Full, 100, tmp.path().to_path_buf()),
+            config,
+        );
         let result = tool
-            .execute(json!({"tasks": [{"title": "test task"}]}))
+            .execute(json!({"working_dir": "proj", "tasks": [{"title": "test task"}]}))
             .await
             .unwrap();
         assert!(!result.success);

@@ -497,8 +497,6 @@ fn default_mcp_startup_timeout_secs() -> u64 {
 pub struct RalphyConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Directory where ralphy executes tasks (the project root).
-    pub working_dir: Option<String>,
     #[serde(default = "default_ralphy_timeout_secs")]
     pub timeout_secs: u64,
     #[serde(default = "default_ralphy_command")]
@@ -517,7 +515,6 @@ impl Default for RalphyConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            working_dir: None,
             timeout_secs: default_ralphy_timeout_secs(),
             command: default_ralphy_command(),
         }
