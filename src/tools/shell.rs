@@ -20,11 +20,27 @@ const SAFE_ENV_VARS: &[&str] = &[
 pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
+    description: String,
 }
 
 impl ShellTool {
     pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
-        Self { security, runtime }
+        let description = Self::build_description(&security);
+        Self {
+            security,
+            runtime,
+            description,
+        }
+    }
+
+    fn build_description(security: &SecurityPolicy) -> String {
+        let mut desc = String::from("Execute a shell command in the workspace directory.");
+        if !security.allowed_commands.is_empty() {
+            desc.push_str("\n\nAllowed commands: ");
+            desc.push_str(&security.allowed_commands.join(", "));
+        }
+        desc.push_str("\n\nCommands can be chained with && or ||. Use 'approved: true' for state-changing operations (git commit, git push, mkdir, touch, mv, cp) in supervised mode.");
+        desc
     }
 }
 
@@ -35,7 +51,7 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the workspace directory"
+        &self.description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
