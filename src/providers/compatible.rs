@@ -718,6 +718,7 @@ impl OpenAiCompatibleProvider {
     }
 
     fn parse_native_response(message: ResponseMessage) -> ProviderChatResponse {
+        let text = message.effective_content_optional();
         let tool_calls = message
             .tool_calls
             .unwrap_or_default()
@@ -734,10 +735,7 @@ impl OpenAiCompatibleProvider {
             })
             .collect::<Vec<_>>();
 
-        ProviderChatResponse {
-            text: message.content,
-            tool_calls,
-        }
+        ProviderChatResponse { text, tool_calls }
     }
 
     fn is_native_tool_schema_unsupported(status: reqwest::StatusCode, error: &str) -> bool {
