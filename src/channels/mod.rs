@@ -1025,9 +1025,10 @@ pub fn build_system_prompt(
     let now = chrono::Local::now();
     let _ = writeln!(
         prompt,
-        "## Current Date & Time\n\n{} ({})\n",
+        "## Current Date & Time\n\n{} ({})\nThe current year is {}. Always use this year in searches and responses.\n",
         now.format("%Y-%m-%d %H:%M:%S"),
-        now.format("%Z")
+        now.format("%Z"),
+        now.format("%Y")
     );
 
     // ── 7. Runtime ──────────────────────────────────────────────
