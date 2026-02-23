@@ -208,6 +208,10 @@ fn format_status_response(
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
     );
 
+    // Collect IDs of monitors that are not UP (status != 1).
+    // Only these need uptime percentages shown.
+    let mut non_up_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     // Parse heartbeatList: { "monitor_id": [ { status, msg, ping, ... }, ... ] }
     if let Some(heartbeat_list) = parsed.get("heartbeatList").and_then(|v| v.as_object()) {
         let _ = writeln!(output, "\n=== Monitor Status ===");
@@ -221,6 +225,9 @@ fn format_status_response(
                     3 => "MAINTENANCE",
                     _ => "UNKNOWN",
                 };
+                if status_code != 1 {
+                    non_up_ids.insert(monitor_id.clone());
+                }
                 let msg = latest.get("msg").and_then(|v| v.as_str()).unwrap_or("");
                 let ping = latest.get("ping").and_then(|v| v.as_i64());
 
@@ -240,27 +247,37 @@ fn format_status_response(
     }
 
     // Parse uptimeList: { "monitor_id_24": 0.99, "monitor_id_720": 0.98 }
-    if let Some(uptime_list) = parsed.get("uptimeList").and_then(|v| v.as_object()) {
-        if !uptime_list.is_empty() {
-            let _ = write!(output, "\n\n=== Uptime ===");
+    // Only show percentages for monitors that are not UP — healthy monitors need no diagnosis.
+    if !non_up_ids.is_empty() {
+        if let Some(uptime_list) = parsed.get("uptimeList").and_then(|v| v.as_object()) {
+            let mut uptime_lines = String::new();
             for (key, value) in uptime_list {
-                let pct = value.as_f64().unwrap_or(0.0) * 100.0;
-                // key format is "monitorId_hours" — resolve the name
                 let parts: Vec<&str> = key.rsplitn(2, '_').collect();
-                let label = if parts.len() == 2 {
+                if parts.len() == 2 {
                     let id = parts[1];
-                    let period = parts[0];
-                    let period_label = match period {
+                    if !non_up_ids.contains(id) {
+                        continue;
+                    }
+                    let pct = value.as_f64().unwrap_or(0.0) * 100.0;
+                    let period_label = match parts[0] {
                         "24" => "24h",
                         "720" => "30d",
                         other => other,
                     };
                     let name = monitor_names.get(id).map(|n| n.as_str()).unwrap_or(id);
-                    format!("{} ({})", name, period_label)
+                    let _ = write!(uptime_lines, "\n  {} ({}): {:.2}%", name, period_label, pct);
                 } else {
-                    key.clone()
-                };
-                let _ = write!(output, "\n  {}: {:.2}%", label, pct);
+                    // key has no underscore separator — include only if non-UP by exact id match
+                    if !non_up_ids.contains(key.as_str()) {
+                        continue;
+                    }
+                    let pct = value.as_f64().unwrap_or(0.0) * 100.0;
+                    let _ = write!(uptime_lines, "\n  {}: {:.2}%", key, pct);
+                }
+            }
+            if !uptime_lines.is_empty() {
+                let _ = write!(output, "\n\n=== Uptime ===");
+                output.push_str(&uptime_lines);
             }
         }
     }
@@ -602,6 +619,9 @@ mod tests {
         names.insert("1".to_string(), "API Server".to_string());
         names.insert("2".to_string(), "Database".to_string());
 
+        // Monitor 1 is UP; monitor 2 is DOWN with its own uptime entries.
+        // Uptime for monitor 1 (UP) must NOT appear.
+        // Uptime for monitor 2 (DOWN) must appear.
         let body = json!({
             "heartbeatList": {
                 "1": [
@@ -613,7 +633,9 @@ mod tests {
             },
             "uptimeList": {
                 "1_24": 0.998,
-                "1_720": 0.995
+                "1_720": 0.995,
+                "2_24": 0.750,
+                "2_720": 0.800
             }
         })
         .to_string();
@@ -628,10 +650,40 @@ mod tests {
         assert!(output.contains("200 - OK"));
         assert!(output.contains("42ms"));
         assert!(output.contains("Connection refused"));
-        assert!(output.contains("99.80%"));
-        assert!(output.contains("99.50%"));
+        // UP monitor (1) uptime must not appear
+        assert!(!output.contains("99.80%"));
+        assert!(!output.contains("99.50%"));
+        // DOWN monitor (2) uptime must appear
+        assert!(output.contains("75.00%"));
+        assert!(output.contains("80.00%"));
         assert!(output.contains("24h"));
         assert!(output.contains("30d"));
+    }
+
+    #[test]
+    fn format_status_response_omits_uptime_when_all_up() {
+        let mut names = std::collections::HashMap::new();
+        names.insert("1".to_string(), "API Server".to_string());
+        names.insert("2".to_string(), "Cache".to_string());
+
+        let body = json!({
+            "heartbeatList": {
+                "1": [{"status": 1, "msg": "200 - OK", "ping": 5}],
+                "2": [{"status": 1, "msg": "200 - OK", "ping": 3}]
+            },
+            "uptimeList": {
+                "1_24": 1.0,
+                "1_720": 0.999,
+                "2_24": 0.998,
+                "2_720": 0.997
+            }
+        })
+        .to_string();
+
+        let output = format_status_response(&body, &names);
+        assert!(output.contains("[UP]"));
+        assert!(!output.contains("=== Uptime ==="));
+        assert!(!output.contains('%'));
     }
 
     #[test]
