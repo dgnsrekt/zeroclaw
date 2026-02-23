@@ -36,7 +36,6 @@ mod tests {
         let telegram = TelegramConfig {
             bot_token: "token".into(),
             allowed_users: vec!["alice".into()],
-            allowed_channels: vec![],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             mention_only: false,

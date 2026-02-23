@@ -2348,10 +2348,6 @@ fn default_draft_update_interval_ms() -> u64 {
 pub struct TelegramConfig {
     pub bot_token: String,
     pub allowed_users: Vec<String>,
-    /// Channel IDs to accept channel_post updates from (e.g. `["-1002627034734"]`).
-    /// Empty = deny all channel posts (secure by default).
-    #[serde(default)]
-    pub allowed_channels: Vec<String>,
     /// Streaming mode for progressive response delivery via message edits.
     #[serde(default)]
     pub stream_mode: StreamMode,
@@ -3574,7 +3570,6 @@ default_temperature = 0.7
                 telegram: Some(TelegramConfig {
                     bot_token: "123:ABC".into(),
                     allowed_users: vec!["user1".into()],
-                    allowed_channels: vec![],
                     stream_mode: StreamMode::default(),
                     draft_update_interval_ms: default_draft_update_interval_ms(),
                     mention_only: false,
@@ -3904,7 +3899,6 @@ tool_dispatcher = "xml"
         let tc = TelegramConfig {
             bot_token: "123:XYZ".into(),
             allowed_users: vec!["alice".into(), "bob".into()],
-            allowed_channels: vec![],
             stream_mode: StreamMode::Partial,
             draft_update_interval_ms: 500,
             mention_only: false,

@@ -788,7 +788,6 @@ mod tests {
         config.channels_config.telegram = Some(TelegramConfig {
             bot_token: "123:ABC".into(),
             allowed_users: vec!["user".into()],
-            allowed_channels: vec![],
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             mention_only: false,

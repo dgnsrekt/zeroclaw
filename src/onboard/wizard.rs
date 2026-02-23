@@ -2674,7 +2674,6 @@ fn setup_channels() -> Result<ChannelsConfig> {
                 config.telegram = Some(TelegramConfig {
                     bot_token: token,
                     allowed_users,
-                    allowed_channels: vec![],
                     stream_mode: StreamMode::default(),
                     draft_update_interval_ms: 1000,
                     mention_only: false,
