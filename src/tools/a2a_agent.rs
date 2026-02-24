@@ -4,7 +4,7 @@ use crate::security::SecurityPolicy;
 use a2a_client::A2AClient;
 use a2a_types::{
     Message, MessageRole, MessageSendParams, Part, SendMessageResponse, SendMessageResult,
-    TaskState,
+    SendMessageSuccessResponse, TaskState,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -180,28 +180,21 @@ impl Tool for A2aAgentTool {
             self.config.connect_timeout_secs,
         );
 
-        // Create A2A client from agent card URL
-        let a2a_client = match A2AClient::from_card_url_with_client(&target.base_url, client).await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Failed to connect to A2A agent '{}' at {}: {}",
-                        agent_name, target.base_url, e
-                    )),
-                });
-            }
-        };
-
-        // Add auth token if configured
-        let a2a_client = if let Some(ref token) = target.auth_token {
-            a2a_client.with_auth_token(token)
-        } else {
-            a2a_client
-        };
+        // Fetch agent card to resolve the service endpoint URL
+        let a2a_client =
+            match A2AClient::from_card_url_with_client(&target.base_url, client.clone()).await {
+                Ok(c) => c,
+                Err(e) => {
+                    return Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(format!(
+                            "Failed to connect to A2A agent '{}' at {}: {}",
+                            agent_name, target.base_url, e
+                        )),
+                    });
+                }
+            };
 
         // Build the A2A message
         let message = Message {
@@ -225,10 +218,77 @@ impl Tool for A2aAgentTool {
             metadata: None,
         };
 
-        // Send with overall timeout
+        // Send with overall timeout.
+        // a2a-client 0.1.2 send_message() uses the wrong inner type (SendMessageResponse
+        // instead of SendMessageResult), causing deserialization to fail against spec-compliant
+        // servers that return Task/Message directly in the result field. We make the raw HTTP
+        // call ourselves and handle both the standard format and the double-wrapped format used
+        // by some servers.
+        let service_url = a2a_client.agent_card().url.clone();
+        let auth_token = target.auth_token.clone();
         let timeout_duration = std::time::Duration::from_secs(self.config.timeout_secs);
-        let send_result =
-            tokio::time::timeout(timeout_duration, a2a_client.send_message(params)).await;
+
+        let send_result = tokio::time::timeout(timeout_duration, async {
+            let params_json = serde_json::to_value(&params)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize params: {}", e))?;
+
+            let mut req = client
+                .post(&service_url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .json(&json!({
+                    "jsonrpc": "2.0",
+                    "method": "message/send",
+                    "id": 1,
+                    "params": params_json
+                }));
+
+            if let Some(ref token) = auth_token {
+                req = req.bearer_auth(token);
+            }
+
+            let http_resp = req
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Network error: {}", e))?;
+
+            if !http_resp.status().is_success() {
+                let status = http_resp.status();
+                let body = http_resp.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!("HTTP error {}: {}", status, body));
+            }
+
+            let raw: serde_json::Value = http_resp
+                .json()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to decode response: {}", e))?;
+
+            let result_value = raw
+                .get("result")
+                .ok_or_else(|| anyhow::anyhow!("missing 'result' field in response"))?;
+
+            // Handle both A2A 0.3 spec format (result is Task/Message directly) and
+            // double-wrapped format where result is {jsonrpc, id, result: Task/Message}.
+            let send_result: SendMessageResult = if result_value.get("jsonrpc").is_some() {
+                let inner = result_value.get("result").ok_or_else(|| {
+                    anyhow::anyhow!("missing inner 'result' in double-wrapped response")
+                })?;
+                serde_json::from_value(inner.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to parse inner result: {}", e))?
+            } else {
+                serde_json::from_value(result_value.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to parse result: {}", e))?
+            };
+
+            Ok::<SendMessageResponse, anyhow::Error>(SendMessageResponse::Success(Box::new(
+                SendMessageSuccessResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: send_result,
+                    id: None,
+                },
+            )))
+        })
+        .await;
 
         let response = match send_result {
             Ok(Ok(resp)) => resp,
