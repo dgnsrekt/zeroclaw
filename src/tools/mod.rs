@@ -19,6 +19,7 @@ pub mod hardware_memory_read;
 pub mod http_request;
 pub mod image_info;
 pub mod lifx;
+pub mod massive;
 pub mod mcp;
 pub mod memory_forget;
 pub mod memory_recall;
@@ -57,6 +58,7 @@ pub use hardware_memory_read::HardwareMemoryReadTool;
 pub use http_request::HttpRequestTool;
 pub use image_info::ImageInfoTool;
 pub use lifx::LifxTool;
+pub use massive::MassiveMarketStatusTool;
 pub use mcp::McpTool;
 pub use memory_forget::MemoryForgetTool;
 pub use memory_recall::MemoryRecallTool;
@@ -169,6 +171,10 @@ pub fn all_tools_with_runtime(
             workspace_dir.to_path_buf(),
         )),
     ];
+
+    tools.push(Box::new(MassiveMarketStatusTool::new(
+        workspace_dir.to_path_buf(),
+    )));
 
     if root_config.pushover.enabled {
         tools.push(Box::new(PushoverTool::new(
