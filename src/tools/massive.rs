@@ -33,6 +33,14 @@ impl MassiveMarketStatusTool {
     }
 
     fn get_api_key(&self) -> anyhow::Result<String> {
+        // ~/.zeroclaw/.env is loaded into the process environment at startup
+        if let Ok(key) = std::env::var("MASSIVE_API_KEY") {
+            if !key.is_empty() {
+                return Ok(key);
+            }
+        }
+
+        // Fall back to workspace .env
         let env_path = self.workspace_dir.join(".env");
         let content = std::fs::read_to_string(&env_path)
             .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", env_path.display(), e))?;
@@ -53,10 +61,7 @@ impl MassiveMarketStatusTool {
             }
         }
 
-        anyhow::bail!(
-            "MASSIVE_API_KEY not found in {}",
-            env_path.display()
-        )
+        anyhow::bail!("MASSIVE_API_KEY not set. Add it to ~/.zeroclaw/.env or workspace .env")
     }
 }
 
