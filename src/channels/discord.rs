@@ -11,6 +11,7 @@ pub struct DiscordChannel {
     bot_token: String,
     guild_id: Option<String>,
     allowed_users: Vec<String>,
+    allowed_channels: Vec<String>,
     listen_to_bots: bool,
     mention_only: bool,
     typing_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -21,6 +22,7 @@ impl DiscordChannel {
         bot_token: String,
         guild_id: Option<String>,
         allowed_users: Vec<String>,
+        allowed_channels: Vec<String>,
         listen_to_bots: bool,
         mention_only: bool,
     ) -> Self {
@@ -28,6 +30,7 @@ impl DiscordChannel {
             bot_token,
             guild_id,
             allowed_users,
+            allowed_channels,
             listen_to_bots,
             mention_only,
             typing_handle: Mutex::new(None),
@@ -43,6 +46,12 @@ impl DiscordChannel {
     /// `"*"` means allow everyone.
     fn is_user_allowed(&self, user_id: &str) -> bool {
         self.allowed_users.iter().any(|u| u == "*" || u == user_id)
+    }
+
+    /// Check if a Discord channel ID is in the channel allowlist.
+    /// Empty list means allow all channels (backward compatible default).
+    fn is_channel_allowed(&self, channel_id: &str) -> bool {
+        self.allowed_channels.is_empty() || self.allowed_channels.iter().any(|c| c == channel_id)
     }
 
     fn bot_user_id_from_token(token: &str) -> Option<String> {
@@ -385,6 +394,12 @@ impl Channel for DiscordChannel {
                         }
                     }
 
+                    let channel_id = d.get("channel_id").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    // Channel filter
+                    if !self.is_channel_allowed(&channel_id) {
+                        continue;
+                    }
+
                     let content = d.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     let Some(clean_content) =
                         normalize_incoming_content(content, self.mention_only, &bot_user_id)
@@ -393,7 +408,6 @@ impl Channel for DiscordChannel {
                     };
 
                     let message_id = d.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                    let channel_id = d.get("channel_id").and_then(|c| c.as_str()).unwrap_or("").to_string();
 
                     let channel_msg = ChannelMessage {
                         id: if message_id.is_empty() {
@@ -475,7 +489,7 @@ mod tests {
 
     #[test]
     fn discord_channel_name() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         assert_eq!(ch.name(), "discord");
     }
 
@@ -496,14 +510,14 @@ mod tests {
 
     #[test]
     fn empty_allowlist_denies_everyone() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         assert!(!ch.is_user_allowed("12345"));
         assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[test]
     fn wildcard_allows_everyone() {
-        let ch = DiscordChannel::new("fake".into(), None, vec!["*".into()], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec!["*".into()], vec![], false, false);
         assert!(ch.is_user_allowed("12345"));
         assert!(ch.is_user_allowed("anyone"));
     }
@@ -514,6 +528,7 @@ mod tests {
             "fake".into(),
             None,
             vec!["111".into(), "222".into()],
+            vec![],
             false,
             false,
         );
@@ -525,7 +540,14 @@ mod tests {
 
     #[test]
     fn allowlist_is_exact_match_not_substring() {
-        let ch = DiscordChannel::new("fake".into(), None, vec!["111".into()], false, false);
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            None,
+            vec!["111".into()],
+            vec![],
+            false,
+            false,
+        );
         assert!(!ch.is_user_allowed("1111"));
         assert!(!ch.is_user_allowed("11"));
         assert!(!ch.is_user_allowed("0111"));
@@ -533,7 +555,14 @@ mod tests {
 
     #[test]
     fn allowlist_empty_string_user_id() {
-        let ch = DiscordChannel::new("fake".into(), None, vec!["111".into()], false, false);
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            None,
+            vec!["111".into()],
+            vec![],
+            false,
+            false,
+        );
         assert!(!ch.is_user_allowed(""));
     }
 
@@ -543,6 +572,7 @@ mod tests {
             "fake".into(),
             None,
             vec!["111".into(), "*".into()],
+            vec![],
             false,
             false,
         );
@@ -552,10 +582,57 @@ mod tests {
 
     #[test]
     fn allowlist_case_sensitive() {
-        let ch = DiscordChannel::new("fake".into(), None, vec!["ABC".into()], false, false);
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            None,
+            vec!["ABC".into()],
+            vec![],
+            false,
+            false,
+        );
         assert!(ch.is_user_allowed("ABC"));
         assert!(!ch.is_user_allowed("abc"));
         assert!(!ch.is_user_allowed("Abc"));
+    }
+
+    #[test]
+    fn empty_channel_allowlist_allows_all() {
+        let ch = DiscordChannel::new("fake".into(), None, vec!["*".into()], vec![], false, false);
+        assert!(ch.is_channel_allowed("111111111111111111"));
+        assert!(ch.is_channel_allowed("999999999999999999"));
+        assert!(ch.is_channel_allowed(""));
+    }
+
+    #[test]
+    fn channel_allowlist_filters_by_id() {
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            None,
+            vec!["*".into()],
+            vec!["111111111111111111".into(), "222222222222222222".into()],
+            false,
+            false,
+        );
+        assert!(ch.is_channel_allowed("111111111111111111"));
+        assert!(ch.is_channel_allowed("222222222222222222"));
+        assert!(!ch.is_channel_allowed("333333333333333333"));
+        assert!(!ch.is_channel_allowed(""));
+    }
+
+    #[test]
+    fn channel_allowlist_exact_match() {
+        let ch = DiscordChannel::new(
+            "fake".into(),
+            None,
+            vec!["*".into()],
+            vec!["123".into()],
+            false,
+            false,
+        );
+        assert!(ch.is_channel_allowed("123"));
+        assert!(!ch.is_channel_allowed("1234"));
+        assert!(!ch.is_channel_allowed("12"));
+        assert!(!ch.is_channel_allowed("0123"));
     }
 
     #[test]
@@ -752,14 +829,14 @@ mod tests {
 
     #[test]
     fn typing_handle_starts_as_none() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         let guard = ch.typing_handle.lock();
         assert!(guard.is_none());
     }
 
     #[tokio::test]
     async fn start_typing_sets_handle() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         let _ = ch.start_typing("123456").await;
         let guard = ch.typing_handle.lock();
         assert!(guard.is_some());
@@ -767,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_clears_handle() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         let _ = ch.start_typing("123456").await;
         let _ = ch.stop_typing("123456").await;
         let guard = ch.typing_handle.lock();
@@ -776,14 +853,14 @@ mod tests {
 
     #[tokio::test]
     async fn stop_typing_is_idempotent() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         assert!(ch.stop_typing("123456").await.is_ok());
         assert!(ch.stop_typing("123456").await.is_ok());
     }
 
     #[tokio::test]
     async fn start_typing_replaces_existing_task() {
-        let ch = DiscordChannel::new("fake".into(), None, vec![], false, false);
+        let ch = DiscordChannel::new("fake".into(), None, vec![], vec![], false, false);
         let _ = ch.start_typing("111").await;
         let _ = ch.start_typing("222").await;
         let guard = ch.typing_handle.lock();

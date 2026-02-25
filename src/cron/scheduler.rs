@@ -276,6 +276,7 @@ async fn deliver_if_configured(config: &Config, job: &CronJob, output: &str) -> 
                 dc.bot_token.clone(),
                 dc.guild_id.clone(),
                 dc.allowed_users.clone(),
+                dc.allowed_channels.clone(),
                 dc.listen_to_bots,
                 dc.mention_only,
             );

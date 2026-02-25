@@ -137,9 +137,7 @@ impl Tool for TootTool {
                 return Ok(ToolResult {
                     success: false,
                     output: String::new(),
-                    error: Some(format!(
-                        "toot command timed out after {TOOT_TIMEOUT_SECS}s"
-                    )),
+                    error: Some(format!("toot command timed out after {TOOT_TIMEOUT_SECS}s")),
                 });
             }
         };

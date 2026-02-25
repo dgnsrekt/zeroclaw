@@ -45,6 +45,7 @@ mod tests {
             bot_token: "token".into(),
             guild_id: Some("123".into()),
             allowed_users: vec![],
+            allowed_channels: vec![],
             listen_to_bots: false,
             mention_only: false,
         };

@@ -2774,6 +2774,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     bot_token: token,
                     guild_id: if guild.is_empty() { None } else { Some(guild) },
                     allowed_users,
+                    allowed_channels: vec![],
                     listen_to_bots: false,
                     mention_only: false,
                 });

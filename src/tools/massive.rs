@@ -27,9 +27,10 @@ impl MassiveMarketStatusTool {
             raw
         };
 
-        unquoted
-            .split_once(" #")
-            .map_or_else(|| unquoted.trim().to_string(), |(v, _)| v.trim().to_string())
+        unquoted.split_once(" #").map_or_else(
+            || unquoted.trim().to_string(),
+            |(v, _)| v.trim().to_string(),
+        )
     }
 
     fn get_api_key(&self) -> anyhow::Result<String> {
@@ -225,10 +226,7 @@ mod tests {
     async fn execute_rejects_invalid_query() {
         let tmp = TempDir::new().unwrap();
         let tool = MassiveMarketStatusTool::new(tmp.path().to_path_buf());
-        let result = tool
-            .execute(json!({"query": "invalid"}))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({"query": "invalid"})).await.unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Invalid query"));
     }

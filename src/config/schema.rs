@@ -2366,6 +2366,10 @@ pub struct DiscordConfig {
     pub guild_id: Option<String>,
     #[serde(default)]
     pub allowed_users: Vec<String>,
+    /// When non-empty, only process messages from these Discord channel IDs.
+    /// Empty list (default) means listen in all channels.
+    #[serde(default)]
+    pub allowed_channels: Vec<String>,
     /// When true, process messages from other bots (not just humans).
     /// The bot still ignores its own messages to prevent feedback loops.
     #[serde(default)]
@@ -3925,6 +3929,7 @@ tool_dispatcher = "xml"
             bot_token: "discord-token".into(),
             guild_id: Some("12345".into()),
             allowed_users: vec![],
+            allowed_channels: vec![],
             listen_to_bots: false,
             mention_only: false,
         };
@@ -3940,6 +3945,7 @@ tool_dispatcher = "xml"
             bot_token: "tok".into(),
             guild_id: None,
             allowed_users: vec![],
+            allowed_channels: vec![],
             listen_to_bots: false,
             mention_only: false,
         };

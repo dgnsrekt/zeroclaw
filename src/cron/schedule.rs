@@ -211,12 +211,12 @@ mod tests {
     #[test]
     fn shift_dow_field_handles_lists_and_steps() {
         assert_eq!(shift_dow_field("*").unwrap(), "*");
-        assert_eq!(shift_dow_field("0").unwrap(), "1");       // Sun
-        assert_eq!(shift_dow_field("5").unwrap(), "6");       // Fri
-        assert_eq!(shift_dow_field("1-5").unwrap(), "2-6");   // Mon-Fri
-        assert_eq!(shift_dow_field("0,6").unwrap(), "1,7");   // Sun,Sat
-        assert_eq!(shift_dow_field("*/2").unwrap(), "*/2");   // every 2nd day
+        assert_eq!(shift_dow_field("0").unwrap(), "1"); // Sun
+        assert_eq!(shift_dow_field("5").unwrap(), "6"); // Fri
+        assert_eq!(shift_dow_field("1-5").unwrap(), "2-6"); // Mon-Fri
+        assert_eq!(shift_dow_field("0,6").unwrap(), "1,7"); // Sun,Sat
+        assert_eq!(shift_dow_field("*/2").unwrap(), "*/2"); // every 2nd day
         assert_eq!(shift_dow_field("1-5/2").unwrap(), "2-6/2");
-        assert_eq!(shift_dow_field("7").unwrap(), "1");       // 7=Sun alias
+        assert_eq!(shift_dow_field("7").unwrap(), "1"); // 7=Sun alias
     }
 }

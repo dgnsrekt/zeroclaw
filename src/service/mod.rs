@@ -209,10 +209,7 @@ fn install_macos(config: &Config) -> Result<()> {
 
     // Build PATH: include cargo bin + standard system paths.
     let cargo_bin = home_dir.join(".cargo").join("bin");
-    let path_str = format!(
-        "{}:/usr/local/bin:/usr/bin:/bin",
-        cargo_bin.display()
-    );
+    let path_str = format!("{}:/usr/local/bin:/usr/bin:/bin", cargo_bin.display());
 
     // Load .env file to inject provider URLs / API keys into the plist.
     let env_file = config_dir.join(".env");
