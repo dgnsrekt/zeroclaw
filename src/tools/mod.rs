@@ -34,6 +34,7 @@ pub mod schema;
 pub mod screenshot;
 pub mod shell;
 pub mod toot;
+pub mod trade_summary;
 pub mod traits;
 pub mod uptime_kuma;
 pub mod web_search_tool;
@@ -75,6 +76,7 @@ pub use schema::{CleaningStrategy, SchemaCleanr};
 pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
 pub use toot::TootTool;
+pub use trade_summary::TradeSummaryTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};
@@ -177,6 +179,8 @@ pub fn all_tools_with_runtime(
     tools.push(Box::new(MassiveMarketStatusTool::new(
         workspace_dir.to_path_buf(),
     )));
+
+    tools.push(Box::new(TradeSummaryTool::new(workspace_dir.to_path_buf())));
 
     tools.push(Box::new(TootTool::new(security.clone())));
 
