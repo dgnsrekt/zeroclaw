@@ -11,8 +11,9 @@ services:
   zeroclaw:
     image: ghcr.io/zeroclaw-labs/zeroclaw:latest
     # Or build locally:
-    # build: .
+    build: .
     container_name: zeroclaw
+    command: daemon
     restart: unless-stopped
     
     environment:
@@ -36,6 +37,8 @@ services:
     volumes:
       # Persist workspace and config (must match WORKDIR/HOME in Dockerfile)
       - zeroclaw-data:/zeroclaw-data
+      # Bind-mount workspace .env for easy host-side credential management
+      - ./workspace.env:/zeroclaw-data/workspace/.env
       
     ports:
       # Gateway API port (override HOST_PORT if 42617 is taken)
