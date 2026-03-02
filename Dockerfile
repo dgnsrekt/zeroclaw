@@ -117,7 +117,16 @@ EXPOSE 42617
 ENTRYPOINT ["zeroclaw"]
 CMD ["gateway"]
 
-# ── Stage 3: Production Runtime (Distroless) ─────────────────
+# ── Stage 3a: Dev Runtime with Docker CLI (for Docker MCP server integration) ─
+FROM dev AS dev-mcp
+
+USER root
+RUN apt-get update && apt-get install -y \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+USER 65534:65534
+
+# ── Stage 3b: Production Runtime (Distroless) ────────────────
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:84fcd3c223b144b0cb6edc5ecc75641819842a9679a3a58fd6294bec47532bf7 AS release
 
 COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw

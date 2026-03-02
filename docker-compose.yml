@@ -11,7 +11,9 @@ services:
   zeroclaw:
     image: ghcr.io/zeroclaw-labs/zeroclaw:latest
     # Or build locally:
-    build: .
+    build:
+      context: .
+      target: dev-mcp
     container_name: zeroclaw
     command: daemon
     restart: unless-stopped
@@ -39,6 +41,12 @@ services:
       - zeroclaw-data:/zeroclaw-data
       # Bind-mount workspace .env for easy host-side credential management
       - ./workspace.env:/zeroclaw-data/workspace/.env
+      # Docker socket for MCP server integration (docker run -i --rm mcp/...)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Add docker group so uid 65534 can access the Docker socket
+    group_add:
+      - "970"
       
     ports:
       # Gateway API port (override HOST_PORT if 42617 is taken)
