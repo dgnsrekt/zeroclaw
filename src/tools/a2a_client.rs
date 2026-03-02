@@ -3,6 +3,10 @@
 //! Wraps a remote A2A agent endpoint as a zeroclaw [`Tool`] so the agent loop
 //! can delegate tasks to other A2A-compatible agents (e.g. dscraper, picobot)
 //! via standard JSON-RPC 2.0 `message/send` calls.
+//!
+//! At construction time the tool fetches `/.well-known/agent.json` from the
+//! remote agent and embeds the real skill list into its description so the LLM
+//! has accurate, grounded knowledge of what the remote agent can do.
 
 use std::time::Duration;
 
@@ -18,7 +22,7 @@ use crate::tools::traits::{Tool, ToolResult};
 pub struct A2aClientTool {
     /// Prefixed name: `a2a__<agent_name>__delegate`.
     name: String,
-    /// Static description built at construction time.
+    /// Description built from the AgentCard at registration time (or static fallback).
     description: String,
     /// Base URL of the remote agent (trailing slash stripped).
     base_url: String,
@@ -27,11 +31,13 @@ pub struct A2aClientTool {
 }
 
 impl A2aClientTool {
-    /// Construct a new `A2aClientTool`.
+    /// Construct a new `A2aClientTool`, fetching the remote AgentCard to build
+    /// an accurate skill-aware description.
     ///
     /// Validates `agent_name` (alphanumeric, `_`, `-` only) and `base_url`
     /// (must parse as an `http` or `https` URL) before building the client.
-    pub fn new(agent_name: &str, base_url: &str, timeout_secs: u64) -> anyhow::Result<Self> {
+    /// AgentCard fetch is non-fatal: falls back to a static description on error.
+    pub async fn new(agent_name: &str, base_url: &str, timeout_secs: u64) -> anyhow::Result<Self> {
         // Validate URL
         let parsed = reqwest::Url::parse(base_url)
             .map_err(|e| anyhow::anyhow!("a2a client '{}': invalid url: {e}", agent_name))?;
@@ -56,14 +62,82 @@ impl A2aClientTool {
 
         let timeout = Duration::from_secs(timeout_secs.max(1));
         let client = reqwest::Client::builder().timeout(timeout).build()?;
+        let base_url = base_url.trim_end_matches('/').to_string();
+
+        let description = fetch_agent_card_description(agent_name, &base_url).await;
 
         Ok(Self {
             name: format!("a2a__{agent_name}__delegate"),
-            description: format!("Delegate to A2A agent '{agent_name}' at {base_url}"),
-            base_url: base_url.trim_end_matches('/').to_string(),
+            description,
+            base_url,
             client,
         })
     }
+}
+
+/// Fetch `/.well-known/agent.json` and build a skill-aware description string.
+///
+/// Returns a static fallback description on any network or parse error.
+async fn fetch_agent_card_description(agent_name: &str, base_url: &str) -> String {
+    let card_client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("A2A: could not build card client for '{agent_name}': {e}");
+            return format!("Delegate to A2A agent '{agent_name}' at {base_url}");
+        }
+    };
+
+    let url = format!("{base_url}/.well-known/agent.json");
+    let body: serde_json::Value = match card_client.get(&url).send().await {
+        Err(e) => {
+            tracing::warn!("A2A: could not fetch AgentCard for '{agent_name}': {e}");
+            return format!("Delegate to A2A agent '{agent_name}' at {base_url}");
+        }
+        Ok(r) => match r.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("A2A: could not parse AgentCard for '{agent_name}': {e}");
+                return format!("Delegate to A2A agent '{agent_name}' at {base_url}");
+            }
+        },
+    };
+
+    let display_name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(agent_name);
+    let agent_desc = body
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let mut desc =
+        format!("Delegate to A2A agent '{display_name}' ({agent_name}) at {base_url}.");
+    if !agent_desc.is_empty() {
+        desc.push('\n');
+        desc.push_str(agent_desc);
+    }
+
+    if let Some(skills) = body.get("skills").and_then(|v| v.as_array()) {
+        if !skills.is_empty() {
+            desc.push_str("\nSkills:");
+            for skill in skills {
+                let id = skill.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let sdesc = skill
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !id.is_empty() {
+                    desc.push_str(&format!("\n• {id}: {sdesc}"));
+                }
+            }
+        }
+    }
+
+    desc
 }
 
 #[async_trait]
@@ -200,9 +274,12 @@ fn find_text_part(parts: Option<&serde_json::Value>) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn tool_name_is_prefixed() {
-        let tool = A2aClientTool::new("foo", "http://localhost:8000", 60).unwrap();
+    #[tokio::test]
+    async fn tool_name_is_prefixed() {
+        // localhost:8000 won't respond — card fetch falls back to static description
+        let tool = A2aClientTool::new("foo", "http://localhost:8000", 60)
+            .await
+            .unwrap();
         assert_eq!(tool.name(), "a2a__foo__delegate");
     }
 
@@ -216,6 +293,19 @@ mod tests {
         assert_eq!(
             extract_a2a_text(&Some(&result)),
             Some("task reply".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_a2a_text_task_path_kind() {
+        let result = serde_json::json!({
+            "artifacts": [{
+                "parts": [{"kind": "text", "text": "task reply kind"}]
+            }]
+        });
+        assert_eq!(
+            extract_a2a_text(&Some(&result)),
+            Some("task reply kind".to_string())
         );
     }
 
@@ -237,21 +327,21 @@ mod tests {
         assert_eq!(extract_a2a_text(&Some(&empty)), None);
     }
 
-    #[test]
-    fn invalid_scheme_rejected() {
-        let err = A2aClientTool::new("agent", "ftp://example.com", 30);
+    #[tokio::test]
+    async fn invalid_scheme_rejected() {
+        let err = A2aClientTool::new("agent", "ftp://example.com", 30).await;
         assert!(err.is_err());
     }
 
-    #[test]
-    fn invalid_name_rejected() {
-        let err = A2aClientTool::new("bad name!", "http://localhost:8000", 30);
+    #[tokio::test]
+    async fn invalid_name_rejected() {
+        let err = A2aClientTool::new("bad name!", "http://localhost:8000", 30).await;
         assert!(err.is_err());
     }
 
-    #[test]
-    fn empty_name_rejected() {
-        let err = A2aClientTool::new("", "http://localhost:8000", 30);
+    #[tokio::test]
+    async fn empty_name_rejected() {
+        let err = A2aClientTool::new("", "http://localhost:8000", 30).await;
         assert!(err.is_err());
     }
 }

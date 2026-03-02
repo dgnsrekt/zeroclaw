@@ -5408,7 +5408,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             let timeout = agent_cfg
                 .timeout_secs
                 .unwrap_or(config.a2a.client.timeout_secs);
-            match crate::tools::A2aClientTool::new(&agent_cfg.name, &agent_cfg.url, timeout) {
+            match crate::tools::A2aClientTool::new(&agent_cfg.name, &agent_cfg.url, timeout).await {
                 Ok(tool) => {
                     tracing::info!("A2A: registered tool '{}'", tool.name());
                     built_tools.push(Box::new(tool));
