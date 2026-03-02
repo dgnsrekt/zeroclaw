@@ -380,6 +380,10 @@ pub struct Config {
     #[serde(default, alias = "mcpServers")]
     pub mcp: McpConfig,
 
+    /// A2A protocol configuration (`[a2a]`).
+    #[serde(default)]
+    pub a2a: A2aConfig,
+
     /// Vision support override for the active provider/model.
     /// - `None` (default): use provider's built-in default
     /// - `Some(true)`: force vision support on (e.g. Ollama running llava)
@@ -723,6 +727,82 @@ pub struct McpConfig {
     /// Configured MCP servers.
     #[serde(default, alias = "mcpServers")]
     pub servers: Vec<McpServerConfig>,
+}
+
+// ── A2A Protocol ────────────────────────────────────────────────
+
+fn default_a2a_timeout_secs() -> u64 {
+    60
+}
+
+fn default_a2a_require_auth() -> bool {
+    true
+}
+
+/// A single remote A2A agent the client can delegate to.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct A2aRemoteAgentConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Client-side A2A configuration (`[a2a.client]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct A2aClientConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_a2a_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub agents: Vec<A2aRemoteAgentConfig>,
+}
+
+impl Default for A2aClientConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_a2a_timeout_secs(),
+            agents: vec![],
+        }
+    }
+}
+
+/// Server-side A2A configuration (`[a2a.server]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct A2aServerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default = "default_a2a_require_auth")]
+    pub require_auth: bool,
+}
+
+impl Default for A2aServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            name: String::new(),
+            description: String::new(),
+            url: String::new(),
+            require_auth: default_a2a_require_auth(),
+        }
+    }
+}
+
+/// A2A protocol configuration (`[a2a]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct A2aConfig {
+    #[serde(default)]
+    pub client: A2aClientConfig,
+    #[serde(default)]
+    pub server: A2aServerConfig,
 }
 
 // ── Agents IPC ──────────────────────────────────────────────────
@@ -6175,6 +6255,7 @@ impl Default for Config {
             transcription: TranscriptionConfig::default(),
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
+            a2a: A2aConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         }
@@ -8025,6 +8106,26 @@ impl Config {
             validate_mcp_config(&self.mcp)?;
         }
 
+        // A2A
+        if self.a2a.client.enabled {
+            for agent in &self.a2a.client.agents {
+                reqwest::Url::parse(&agent.url).map_err(|e| {
+                    anyhow::anyhow!("a2a.client.agents: invalid url '{}': {e}", agent.url)
+                })?;
+                if agent.name.is_empty()
+                    || !agent
+                        .name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                {
+                    anyhow::bail!("a2a.client.agents: invalid name '{}'", agent.name);
+                }
+            }
+        }
+        if self.a2a.server.enabled && self.a2a.server.name.is_empty() {
+            anyhow::bail!("a2a.server.name is required when a2a.server.enabled = true");
+        }
+
         // Proxy (delegate to existing validation)
         self.proxy.validate()?;
 
@@ -9025,6 +9126,17 @@ mod tests {
     }
 
     #[test]
+    async fn a2a_config_defaults_parse_correctly() {
+        let cfg: A2aConfig = toml::from_str("").unwrap();
+        assert!(!cfg.client.enabled);
+        assert_eq!(cfg.client.timeout_secs, 60);
+        assert!(cfg.client.agents.is_empty());
+        assert!(!cfg.server.enabled);
+        assert!(cfg.server.name.is_empty());
+        assert!(cfg.server.require_auth);
+    }
+
+    #[test]
     async fn wasm_config_invalid_values_rejected() {
         let mut c = Config::default();
 
@@ -9565,6 +9677,7 @@ ws_url = "ws://127.0.0.1:3002"
             transcription: TranscriptionConfig::default(),
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
+            a2a: A2aConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         };
@@ -9940,6 +10053,7 @@ tool_dispatcher = "xml"
             transcription: TranscriptionConfig::default(),
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
+            a2a: A2aConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         };

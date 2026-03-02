@@ -5398,6 +5398,31 @@ pub async fn start_channels(config: Config) -> Result<()> {
         }
     }
 
+    // Wire A2A client tools — non-fatal, same pattern as MCP wiring above.
+    if config.a2a.client.enabled && !config.a2a.client.agents.is_empty() {
+        tracing::info!(
+            "Initializing A2A client — {} agent(s) configured",
+            config.a2a.client.agents.len()
+        );
+        for agent_cfg in &config.a2a.client.agents {
+            let timeout = agent_cfg
+                .timeout_secs
+                .unwrap_or(config.a2a.client.timeout_secs);
+            match crate::tools::A2aClientTool::new(&agent_cfg.name, &agent_cfg.url, timeout) {
+                Ok(tool) => {
+                    tracing::info!("A2A: registered tool '{}'", tool.name());
+                    built_tools.push(Box::new(tool));
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "A2A client '{}' failed to initialize: {e:#}",
+                        agent_cfg.name
+                    );
+                }
+            }
+        }
+    }
+
     let tools_registry = Arc::new(built_tools);
 
     let skills = crate::skills::load_skills_with_config(&workspace, &config);

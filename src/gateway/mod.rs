@@ -7,6 +7,7 @@
 //! - Request timeouts (30s) to prevent slow-loris attacks
 //! - Header sanitization (handled by axum/hyper)
 
+mod a2a;
 pub mod api;
 mod openai_compat;
 mod openclaw_compat;
@@ -366,6 +367,9 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
              [gateway] allow_public_bind = true in config.toml (NOT recommended)."
         );
     }
+    // Read A2A server flag before config is moved into Arc<Mutex<>>.
+    let a2a_server_enabled = config.a2a.server.enabled;
+
     let config_state = Arc::new(Mutex::new(config.clone()));
 
     // ── Hooks ──────────────────────────────────────────────────────
@@ -823,7 +827,20 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         // ── Static assets (web dashboard) ──
         .route("/_app/{*path}", get(static_files::handle_static))
         // ── Config PUT with larger body limit ──
-        .merge(config_put_router)
+        .merge(config_put_router);
+
+    // Conditionally mount A2A routes (before .with_state())
+    let app = if a2a_server_enabled {
+        app.route(
+            "/.well-known/agent.json",
+            get(a2a::handle_agent_card),
+        )
+        .route("/a2a", post(a2a::handle_a2a_rpc))
+    } else {
+        app
+    };
+
+    let app = app
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .layer(TimeoutLayer::with_status_code(
