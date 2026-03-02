@@ -14,7 +14,7 @@ use crate::tools::traits::{Tool, ToolResult};
 ///
 /// The tool name is `a2a__{name}__delegate` (e.g. `a2a__dscraper__delegate`).
 /// A single `message` parameter (string) is forwarded as a `message/send`
-/// JSON-RPC POST to the remote agent's `/a2a` endpoint.
+/// JSON-RPC POST to the remote agent's base URL (the `url` from its AgentCard).
 pub struct A2aClientTool {
     /// Prefixed name: `a2a__<agent_name>__delegate`.
     name: String,
@@ -97,21 +97,23 @@ impl Tool for A2aClientTool {
             .to_string();
 
         let id = uuid::Uuid::new_v4().to_string();
+        let message_id = uuid::Uuid::new_v4().to_string();
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "message/send",
             "params": {
                 "message": {
+                    "messageId": message_id,
                     "role": "user",
-                    "parts": [{"type": "text", "text": msg}]
+                    "parts": [{"kind": "text", "text": msg}]
                 }
             }
         });
 
         let resp = self
             .client
-            .post(format!("{}/a2a", self.base_url))
+            .post(&self.base_url)
             .json(&payload)
             .send()
             .await;
@@ -181,7 +183,12 @@ fn extract_a2a_text(result: &Option<&serde_json::Value>) -> Option<String> {
 
 fn find_text_part(parts: Option<&serde_json::Value>) -> Option<String> {
     parts?.as_array()?.iter().find_map(|p| {
-        if p.get("type")?.as_str()? == "text" {
+        // A2A 0.3 uses "kind", earlier drafts used "type" — accept both
+        let discriminant = p
+            .get("kind")
+            .or_else(|| p.get("type"))
+            .and_then(|v| v.as_str());
+        if discriminant == Some("text") {
             p.get("text")?.as_str().map(|s| s.to_string())
         } else {
             None
