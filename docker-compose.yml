@@ -33,8 +33,8 @@ services:
       # Default gateway port inside container
       - ZEROCLAW_GATEWAY_PORT=${ZEROCLAW_GATEWAY_PORT:-42617}
       
-      # Optional: Model override
-      # - ZEROCLAW_MODEL=anthropic/claude-sonnet-4-20250514
+      # Model override (required: dev stage has ZEROCLAW_MODEL=llama3.2 baked in)
+      - ZEROCLAW_MODEL=gpt-5.1-codex-mini
       
     volumes:
       # Persist workspace and config (must match WORKDIR/HOME in Dockerfile)
