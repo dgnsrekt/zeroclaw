@@ -236,6 +236,7 @@ pub async fn run_wizard_with_migration(
         agents_ipc: crate::config::AgentsIpcConfig::default(),
         mcp: crate::config::schema::McpConfig::default(),
         a2a: crate::config::schema::A2aConfig::default(),
+        sse_watcher: crate::config::schema::SseWatcherConfig::default(),
         model_support_vision: None,
         wasm: crate::config::WasmConfig::default(),
     };
@@ -753,6 +754,7 @@ async fn run_quick_setup_with_home(
         agents_ipc: crate::config::AgentsIpcConfig::default(),
         mcp: crate::config::schema::McpConfig::default(),
         a2a: crate::config::schema::A2aConfig::default(),
+        sse_watcher: crate::config::schema::SseWatcherConfig::default(),
         model_support_vision: None,
         wasm: crate::config::WasmConfig::default(),
     };

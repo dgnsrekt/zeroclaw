@@ -103,9 +103,25 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         tracing::info!("Cron disabled; scheduler supervisor not started");
     }
 
+    if config.sse_watcher.enabled && !config.sse_watcher.feeds.is_empty() {
+        let sse_cfg = config.clone();
+        handles.push(spawn_component_supervisor(
+            "sse_watcher",
+            initial_backoff,
+            max_backoff,
+            move || {
+                let cfg = sse_cfg.clone();
+                async move { crate::sse_watcher::run(cfg).await }
+            },
+        ));
+    } else {
+        crate::health::mark_component_ok("sse_watcher");
+        tracing::info!("SSE watcher disabled or no feeds configured");
+    }
+
     println!("🧠 ZeroClaw daemon started");
     println!("   Gateway:  http://{host}:{port}");
-    println!("   Components: gateway, channels, heartbeat, scheduler");
+    println!("   Components: gateway, channels, heartbeat, scheduler, sse_watcher");
     println!("   Ctrl+C to stop");
 
     tokio::signal::ctrl_c().await?;

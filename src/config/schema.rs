@@ -384,6 +384,10 @@ pub struct Config {
     #[serde(default)]
     pub a2a: A2aConfig,
 
+    /// SSE feed watcher configuration (`[sse_watcher]`).
+    #[serde(default)]
+    pub sse_watcher: SseWatcherConfig,
+
     /// Vision support override for the active provider/model.
     /// - `None` (default): use provider's built-in default
     /// - `Some(true)`: force vision support on (e.g. Ollama running llava)
@@ -803,6 +807,72 @@ pub struct A2aConfig {
     pub client: A2aClientConfig,
     #[serde(default)]
     pub server: A2aServerConfig,
+}
+
+// ── SSE Watcher ─────────────────────────────────────────────────
+
+fn default_sse_reconnect_delay_secs() -> u64 {
+    2
+}
+
+fn default_sse_event_types() -> Vec<String> {
+    vec!["alert_fired".to_string()]
+}
+
+/// One handler: a filter + prompt pair attached to an SSE feed.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SseWatcherHandlerConfig {
+    pub name: String,
+    /// Event types to match against `text.content.m`. Default: ["alert_fired"].
+    #[serde(default = "default_sse_event_types")]
+    pub event_types: Vec<String>,
+    /// Allow-list: symbol must contain one of these (case-insensitive substring). Empty = any.
+    #[serde(default)]
+    pub match_symbol: Vec<String>,
+    /// Deny-list: skip if symbol contains any of these.
+    #[serde(default)]
+    pub ignore_symbol: Vec<String>,
+    /// Allow-list: message must contain one of these. Empty = any.
+    #[serde(default)]
+    pub match_message: Vec<String>,
+    /// Deny-list: skip if message contains any of these.
+    #[serde(default)]
+    pub ignore_message: Vec<String>,
+    /// Prompt prepended to alert data before sending to agent.
+    #[serde(default)]
+    pub prompt: String,
+    /// Delivery channel name ("telegram", "discord", etc.).
+    #[serde(default)]
+    pub delivery_channel: Option<String>,
+    /// Delivery target (chat ID, user ID, etc.).
+    #[serde(default)]
+    pub delivery_to: Option<String>,
+    /// Optional session ID for conversation continuity across alerts. Default: handler name.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// Optional model override.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// One SSE feed source with one or more handlers.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct SseWatcherFeedConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(default = "default_sse_reconnect_delay_secs")]
+    pub reconnect_delay_secs: u64,
+    #[serde(default)]
+    pub handlers: Vec<SseWatcherHandlerConfig>,
+}
+
+/// Top-level SSE watcher config (`[sse_watcher]`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct SseWatcherConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub feeds: Vec<SseWatcherFeedConfig>,
 }
 
 // ── Agents IPC ──────────────────────────────────────────────────
@@ -6256,6 +6326,7 @@ impl Default for Config {
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             a2a: A2aConfig::default(),
+            sse_watcher: SseWatcherConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         }
@@ -9678,6 +9749,7 @@ ws_url = "ws://127.0.0.1:3002"
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             a2a: A2aConfig::default(),
+            sse_watcher: SseWatcherConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         };
@@ -10054,6 +10126,7 @@ tool_dispatcher = "xml"
             agents_ipc: AgentsIpcConfig::default(),
             mcp: McpConfig::default(),
             a2a: A2aConfig::default(),
+            sse_watcher: SseWatcherConfig::default(),
             model_support_vision: None,
             wasm: WasmConfig::default(),
         };

@@ -44,6 +44,10 @@ services:
       # Docker socket for MCP server integration (docker run -i --rm mcp/...)
       - /var/run/docker.sock:/var/run/docker.sock
 
+    # Expose host as host.docker.internal (Linux requires explicit mapping)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     # Add docker group so uid 65534 can access the Docker socket
     group_add:
       - "970"

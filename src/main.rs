@@ -89,6 +89,7 @@ mod security;
 mod service;
 mod skillforge;
 mod skills;
+mod sse_watcher;
 mod tools;
 mod tunnel;
 mod update;
