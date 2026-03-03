@@ -114,8 +114,7 @@ async fn fetch_agent_card_description(agent_name: &str, base_url: &str) -> Strin
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let mut desc =
-        format!("Delegate to A2A agent '{display_name}' ({agent_name}) at {base_url}.");
+    let mut desc = format!("Delegate to A2A agent '{display_name}' ({agent_name}) at {base_url}.");
     if !agent_desc.is_empty() {
         desc.push('\n');
         desc.push_str(agent_desc);
@@ -185,12 +184,7 @@ impl Tool for A2aClientTool {
             }
         });
 
-        let resp = self
-            .client
-            .post(&self.base_url)
-            .json(&payload)
-            .send()
-            .await;
+        let resp = self.client.post(&self.base_url).json(&payload).send().await;
 
         match resp {
             Err(e) => Ok(ToolResult {
@@ -199,10 +193,7 @@ impl Tool for A2aClientTool {
                 error: Some(e.to_string()),
             }),
             Ok(r) => {
-                let body: serde_json::Value = r
-                    .json()
-                    .await
-                    .unwrap_or(serde_json::Value::Null);
+                let body: serde_json::Value = r.json().await.unwrap_or(serde_json::Value::Null);
 
                 // JSON-RPC error field takes priority
                 if let Some(err) = body.get("error") {
@@ -214,11 +205,8 @@ impl Tool for A2aClientTool {
                 }
 
                 let result = body.get("result");
-                let text = extract_a2a_text(&result).unwrap_or_else(|| {
-                    result
-                        .map(|v| v.to_string())
-                        .unwrap_or_default()
-                });
+                let text = extract_a2a_text(&result)
+                    .unwrap_or_else(|| result.map(|v| v.to_string()).unwrap_or_default());
 
                 Ok(ToolResult {
                     success: true,

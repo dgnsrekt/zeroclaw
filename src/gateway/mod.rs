@@ -831,11 +831,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     // Conditionally mount A2A routes (before .with_state())
     let app = if a2a_server_enabled {
-        app.route(
-            "/.well-known/agent.json",
-            get(a2a::handle_agent_card),
-        )
-        .route("/a2a", post(a2a::handle_a2a_rpc))
+        app.route("/.well-known/agent.json", get(a2a::handle_agent_card))
+            .route("/a2a", post(a2a::handle_a2a_rpc))
     } else {
         app
     };
