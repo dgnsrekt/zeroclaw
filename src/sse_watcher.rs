@@ -2,6 +2,7 @@ use crate::config::{
     schema::{SseWatcherFeedConfig, SseWatcherHandlerConfig},
     Config,
 };
+use crate::memory::MemoryCategory;
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -280,6 +281,34 @@ async fn fire_handler(
         handler.delivery_to.as_deref(),
     ) {
         crate::cron::scheduler::deliver_announcement(&cfg, channel, to, &output).await?;
+    }
+
+    // Store alert for recall via the memory_recall tool.
+    // Timestamped entry scoped to handler session; rolling global entry (session_id=None)
+    // found by memory_recall across all sessions regardless of who asks.
+    if let Ok(mem) =
+        crate::memory::create_memory(&cfg.memory, &cfg.workspace_dir, cfg.api_key.as_deref())
+    {
+        let safe_time = fire_time.replace([':', 'T', 'Z'], "_");
+        let content = format!(
+            "TradingView alert: {symbol} | Fired: {fire_time} | Bar: {bar_time} | Resolution: {resolution}m | Kinds: {kinds}",
+        );
+        let _ = mem
+            .store(
+                &format!("sse_alert_{}_{}", handler.name, safe_time),
+                &content,
+                MemoryCategory::Conversation,
+                Some(&session_id),
+            )
+            .await;
+        let _ = mem
+            .store(
+                &format!("last_alert_{}", handler.name),
+                &content,
+                MemoryCategory::Core,
+                None,
+            )
+            .await;
     }
 
     Ok(())
