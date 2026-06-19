@@ -2,7 +2,6 @@ use crate::config::{
     schema::{SseWatcherFeedConfig, SseWatcherHandlerConfig},
     Config,
 };
-use crate::memory::MemoryCategory;
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -134,17 +133,22 @@ fn handle_event(config: &Config, feed: &SseWatcherFeedConfig, data: String) {
         .to_string();
     let symbol = decode_symbol(&raw_symbol);
 
+    let alert_name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
     for handler in &feed.handlers {
-        if handler_matches(handler, &msg_type, &symbol, &message) {
+        if handler_matches(handler, &msg_type, &symbol, &message, &alert_name) {
             let cfg = config.clone();
             let h = handler.clone();
             let p = payload.clone();
-            let msg = message.clone();
-            let sym = symbol.clone();
-            #[allow(clippy::large_futures)]
+            let feed_name = feed.name.clone();
+            let handler_name = h.name.clone();
             tokio::spawn(async move {
-                if let Err(e) = fire_handler(cfg, h, p, msg, sym).await {
-                    warn!("SSE handler fire error: {e}");
+                if let Err(e) = fire_handler(cfg, h, p, feed_name).await {
+                    warn!(handler = %handler_name, "SSE handler fire error: {e}");
                 }
             });
         }
@@ -156,7 +160,26 @@ fn handler_matches(
     msg_type: &str,
     symbol: &str,
     message: &str,
+    alert_name: &str,
 ) -> bool {
+    // Stage 0: alert name allow/deny
+    if !h.match_name.is_empty() {
+        let name_lc = alert_name.to_ascii_lowercase();
+        let allowed = h
+            .match_name
+            .iter()
+            .any(|s| name_lc.contains(&s.to_ascii_lowercase()));
+        if !allowed {
+            return false;
+        }
+    }
+    if h.ignore_name
+        .iter()
+        .any(|s| alert_name.to_ascii_lowercase().contains(&s.to_ascii_lowercase()))
+    {
+        return false;
+    }
+
     // Stage 1: event type allow-list
     if !h
         .event_types
@@ -210,106 +233,28 @@ async fn fire_handler(
     config: Config,
     handler: SseWatcherHandlerConfig,
     payload: Value,
-    message: String,
-    symbol: String,
+    feed_name: String,
 ) -> Result<()> {
-    let fire_time = payload
-        .get("fire_time")
-        .or_else(|| payload.get("fired_for_time"))
-        .map(|v| {
-            v.as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| v.to_string())
-        })
-        .unwrap_or_default();
+    let log_path = config.workspace_dir.join("sse_alerts.jsonl");
 
-    let bar_time = payload
-        .get("bar_time")
-        .map(|v| {
-            v.as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| v.to_string())
-        })
-        .unwrap_or_default();
+    let entry = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "feed": feed_name,
+        "handler": handler.name,
+        "payload": payload,
+    });
 
-    let alert_id = payload
-        .get("plot_id")
-        .or_else(|| payload.get("id"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let line = serde_json::to_string(&entry)? + "\n";
 
-    let resolution = payload
-        .get("resolution")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .await?;
+    file.write_all(line.as_bytes()).await?;
 
-    let kinds = payload
-        .get("kinds")
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-
-    let agent_msg = format!(
-        "[sse_alert handler:{name}]\n\n{prompt}\n\nAlert: {message}\nSymbol: {symbol}\nFired at: {fire_time}\nBar time: {bar_time}\nAlert ID: {alert_id}\nResolution: {resolution}m\nKinds: {kinds}",
-        name = handler.name,
-        prompt = handler.prompt,
-    );
-
-    let session_id = handler
-        .session_id
-        .as_deref()
-        .unwrap_or(&handler.name)
-        .to_string();
-
-    let mut cfg = config;
-    if let Some(ref model) = handler.model {
-        cfg.default_model = Some(model.clone());
-    }
-
-    #[allow(clippy::large_futures)]
-    let output =
-        crate::agent::process_message_with_session(cfg.clone(), &agent_msg, Some(&session_id))
-            .await?;
-
-    if crate::cron::scheduler::is_no_reply_sentinel(&output) {
-        return Ok(());
-    }
-
-    if let (Some(channel), Some(to)) = (
-        handler.delivery_channel.as_deref(),
-        handler.delivery_to.as_deref(),
-    ) {
-        crate::cron::scheduler::deliver_announcement(&cfg, channel, to, &output).await?;
-    }
-
-    // Store alert for recall via the memory_recall tool.
-    // Timestamped entry scoped to handler session; rolling global entry (session_id=None)
-    // found by memory_recall across all sessions regardless of who asks.
-    if let Ok(mem) =
-        crate::memory::create_memory(&cfg.memory, &cfg.workspace_dir, cfg.api_key.as_deref())
-    {
-        let safe_time = fire_time.replace([':', 'T', 'Z'], "_");
-        let content = format!(
-            "TradingView alert: {symbol} | Fired: {fire_time} | Bar: {bar_time} | Resolution: {resolution}m | Kinds: {kinds}",
-        );
-        let _ = mem
-            .store(
-                &format!("sse_alert_{}_{}", handler.name, safe_time),
-                &content,
-                MemoryCategory::Conversation,
-                Some(&session_id),
-            )
-            .await;
-        let _ = mem
-            .store(
-                &format!("last_alert_{}", handler.name),
-                &content,
-                MemoryCategory::Core,
-                None,
-            )
-            .await;
-    }
+    info!(path = %log_path.display(), "SSE alert logged");
 
     Ok(())
 }

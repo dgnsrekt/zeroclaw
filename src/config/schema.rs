@@ -832,6 +832,12 @@ pub struct SseWatcherHandlerConfig {
     /// Deny-list: skip if symbol contains any of these.
     #[serde(default)]
     pub ignore_symbol: Vec<String>,
+    /// Allow-list: alert name must contain one of these (case-insensitive substring). Empty = any.
+    #[serde(default)]
+    pub match_name: Vec<String>,
+    /// Deny-list: skip if alert name contains any of these.
+    #[serde(default)]
+    pub ignore_name: Vec<String>,
     /// Allow-list: message must contain one of these. Empty = any.
     #[serde(default)]
     pub match_message: Vec<String>,
